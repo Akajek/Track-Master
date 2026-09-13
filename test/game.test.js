@@ -91,6 +91,19 @@ async function park(mm, run) {
   await waitFor(() => mm.state.edit === 0, 'live again');
   await waitFor(() => me(run).x === startPx(SX) && me(run).d === 0, 'runner is on the start tile');
 }
+/* Starting gold can only be handed out in edit mode, which is also how a
+   Mastermind would top themselves up between rounds. */
+async function bankroll(mm, amount) {
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'edit mode for the bankroll');
+  /* The server ignores a setting that is already at that value, so nudge it
+     first when we are asking for the amount it is already set to. */
+  if (mm.set.startGold === amount) await setOpt(mm, 'startGold', amount - 100);
+  await setOpt(mm, 'startGold', amount);
+  await waitFor(() => mm.state.gold >= amount, 'gold topped up to ' + amount);
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'live again');
+}
 async function setOpt(mm, key, v) {
   mm.send({ t: 'setting', key, v });
   await waitFor(() => mm.set[key] === v, 'setting ' + key + ' = ' + v);
@@ -132,6 +145,10 @@ async function main() {
   }
   for (const t of ['spikes', 'glue', 'saw', 'mine', 'snare', 'portal']) {
     assert.ok(D.TRAPS[t], 'trap ' + t + ' is defined');
+  }
+  for (const k in D.BUILD) {
+    assert.strictEqual(D.BUILD[k].forms.length, RULES.MAX_FORM + 1, k + ' has a name for every form');
+    assert.ok(D.BUILD[k].tracks.length > 0, k + ' has at least one upgrade track, so it can grow');
   }
   for (const u of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'momentum', 'grip', 'haste', 'tough']) {
     assert.ok(D.UPGRADES[u], 'upgrade ' + u + ' is defined');
@@ -270,6 +287,24 @@ async function main() {
   await park(mm, run);
   await runRight(run, () => !twAt(mm, SX + 3, ROW), 'the mine goes off once and is gone for good', 6000);
 
+  /* ---- healing works through damage -------------------------------------- */
+  /* Regeneration used to wait two seconds after the last hit. It must not: the
+     test damages the runner, removes the source, and checks that health starts
+     climbing again well inside the old grace period. */
+  await runRight(run, () => me(run).pt >= 10, 'bank points for regen', 9000);
+  for (let i = 0; i < 3; i++) run.send({ t: 'upgrade', key: 'regen' });
+  await waitFor(() => me(run).up.regen === 3, 'three levels of regen bought');
+  await park(mm, run);
+  mm.send({ t: 'tower', type: 'sniper', x: SX + 4, y: ROW - 1 });
+  await waitFor(() => twAt(mm, SX + 4, ROW - 1), 'a sniper to do the hurting');
+  const full = me(run).hp;
+  await waitFor(() => me(run).hp < full && !me(run).d, 'the sniper lands a hit', 15000);
+  const hurtAt = Date.now(), low = me(run).hp;
+  mm.send({ t: 'sell', x: SX + 4, y: ROW - 1 });
+  await waitFor(() => me(run).hp > low, 'health climbs back while the hit is still fresh', 1600);
+  assert.ok(Date.now() - hurtAt < 2000,
+    'healing restarted ' + (Date.now() - hurtAt) + 'ms after the hit, inside the old 2s grace');
+
   /* ---- towers, upgrade tracks, and a kill -------------------------------- */
   const gold0 = mm.state.gold;
   mm.send({ t: 'tower', type: 'turret', x: SX + 2, y: ROW });
@@ -295,28 +330,90 @@ async function main() {
     const t = twAt(mm, SX + 2, ROW - 1);
     return t.up.rng === 1 && t.up.spd === 1;
   }, 'range and rate tracks upgraded too');
-  assert.strictEqual(RULES.level(twAt(mm, SX + 2, ROW - 1).up), 4, 'level is the sum of every track');
+  assert.strictEqual(RULES.upgrades(twAt(mm, SX + 2, ROW - 1).up), 3, 'upgrades are the sum of every track');
+  assert.strictEqual(RULES.form(twAt(mm, SX + 2, ROW - 1).up), 0, 'three upgrades is not yet a new form');
+  assert.strictEqual(RULES.toNextForm(twAt(mm, SX + 2, ROW - 1).up), 2, 'two more upgrades to the next form');
   assert.ok(mm.state.gold < goldBeforeUp, 'upgrades cost gold (' + upCost + ' for the first)');
   mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'pow' });
   await sleep(150);
   assert.strictEqual(twAt(mm, SX + 2, ROW - 1).up.pow, undefined, 'a turret has no power track to buy');
 
-  const vpMM0 = run.state.vpMM;
+  /* ---- forms: a new shape every five upgrades, six of them, then stats only */
+  /* Thirty-odd exponential upgrades is a lot of gold, so fund it and turn the
+     cost-scaling setting down: the shape of the curve is what matters here. */
+  await setOpt(mm, 'twGrow', 25);
+  await bankroll(mm, 20000);
+  const seen = [];                       /* [upgrades, form] after each purchase */
+  for (let i = 0; i < 32; i++) {
+    const track = ['dmg', 'rng', 'spd'][i % 3];
+    if (mm.state.gold < 4000) await bankroll(mm, 20000);   /* exponential costs bite */
+    const want = RULES.upgrades(twAt(mm, SX + 2, ROW - 1).up) + 1;
+    mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track });
+    await waitFor(() => RULES.upgrades(twAt(mm, SX + 2, ROW - 1).up) === want, 'upgrade ' + want);
+    seen.push([want, RULES.form(twAt(mm, SX + 2, ROW - 1).up)]);
+  }
+  for (const [n, f] of seen) {
+    assert.strictEqual(f, Math.min(RULES.MAX_FORM, Math.floor(n / 5)),
+      'at ' + n + ' upgrades the form should be ' + Math.min(RULES.MAX_FORM, Math.floor(n / 5)));
+  }
+  const changedAt = seen.filter((e, i) => i > 0 && e[1] !== seen[i - 1][1]).map(e => e[0]);
+  assert.deepStrictEqual(changedAt, [5, 10, 15, 20, 25, 30],
+    'the shape changes at exactly 5, 10, 15, 20, 25 and 30 upgrades, and never again');
+  const finalTurret = twAt(mm, SX + 2, ROW - 1);
+  assert.strictEqual(RULES.upgrades(finalTurret.up), 35, '35 upgrades bought in total');
+  assert.strictEqual(RULES.form(finalTurret.up), RULES.MAX_FORM, 'the last form is reached at 30');
+  assert.strictEqual(RULES.toNextForm(finalTurret.up), 0, 'and there is nothing left to grow into');
+  assert.strictEqual(RULES.formName(D.TOWERS.turret, finalTurret.up), 'Annihilator', 'the final shape is named');
+  assert.strictEqual(RULES.formName(D.TOWERS.turret, {}), 'Turret', 'and so is the first');
+  assert.ok(mm.msgs.some(t => /grew into a Twin Turret/.test(t)), 'everyone is told about a new shape');
+  /* past the last form, upgrades still raise the stats */
+  const dmgAt35 = RULES.dmg(D.TOWERS.turret, finalTurret.up);
+  mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'dmg' });
+  await waitFor(() => RULES.upgrades(twAt(mm, SX + 2, ROW - 1).up) === 36, 'a 36th upgrade');
+  const after = twAt(mm, SX + 2, ROW - 1);
+  assert.strictEqual(RULES.form(after.up), RULES.MAX_FORM, 'the shape does not change any more');
+  assert.ok(RULES.dmg(D.TOWERS.turret, after.up) > dmgAt35, 'but the damage still climbs');
+  /* and the cost climbed exponentially on the way */
+  /* The price curve is exponential in the building's total upgrades: every five
+     upgrades multiply it by the same factor, all the way up. */
+  const base = { twGrow: 100 };
+  const curve = [];
+  for (let n = 0; n <= 30; n += 5) curve.push(RULES.trackCost(base, D.TOWERS.turret, n));
+  const perFive = Math.pow(RULES.TRACK_EXP, 5);
+  for (let i = 1; i < curve.length; i++) {
+    const ratio = curve[i] / curve[i - 1];
+    assert.ok(Math.abs(ratio - perFive) < perFive * 0.04,
+      'five more upgrades multiply the price by about ' + perFive.toFixed(2) + ', got ' + ratio.toFixed(2));
+  }
+  assert.ok(curve[6] > curve[0] * 100,
+    'the last form costs two orders of magnitude more than the first upgrade (' +
+    curve[0] + ' -> ' + curve[6] + ')');
+  /* and a one-track trap is no further from its final form than a three-track tower */
+  const trapTotal = [], towerTotal = [];
+  for (let n = 0; n < 30; n++) {
+    trapTotal.push(RULES.trackCost(base, D.TRAPS.glue, n));
+    towerTotal.push(RULES.trackCost(base, D.TOWERS.turret, n));
+  }
+  const sum = a => a.reduce((x, y) => x + y, 0);
+  assert.ok(Math.abs(sum(trapTotal) / D.TRAPS.glue.cost - sum(towerTotal) / D.TOWERS.turret.cost) < 1,
+    'reaching the final form costs the same multiple of build cost for a one-track trap as a three-track tower');
+  mm.send({ t: 'sell', x: SX + 2, y: ROW - 1 });
+  await waitFor(() => !twAt(mm, SX + 2, ROW - 1), 'the overgrown turret is sold again');
+  await setOpt(mm, 'twGrow', 100);
+
+  await setOpt(mm, 'respawn', 1);
+  await waitFor(() => me(run).d === 0, 'the runner is on their feet before the kill test', 12000);
+  const vpMM0 = run.state.vpMM, deaths0 = me(run).dth;
   mm.send({ t: 'tower', type: 'sniper', x: SX + 4, y: ROW - 1 });
   await waitFor(() => twAt(mm, SX + 4, ROW - 1), 'sniper built');
-  await setOpt(mm, 'respawn', 1);
-  await waitFor(() => me(run).d === 1, 'the towers kill the runner', 20000);
+  await waitFor(() => me(run).dth === deaths0 + 1, 'the towers kill the runner', 25000);
   assert.strictEqual(run.state.vpMM, vpMM0 + mm.set.vpKill, 'a kill scores VP for the Mastermind');
-  assert.ok(me(run).dth >= 1, 'the death is counted');
   await waitFor(() => me(run).d === 0, 'and the runner respawns', 5000);
 
   /* ---- mastermind abilities ---------------------------------------------- */
-  mm.send({ t: 'mode', edit: true });
-  await waitFor(() => mm.state.edit === 1, 'edit mode, where the bankroll can be set');
-  await setOpt(mm, 'startGold', 5000);
-  await waitFor(() => mm.state.gold >= 5000, 'setting the bankroll while editing tops the gold up');
-  mm.send({ t: 'mode', edit: false });
-  await waitFor(() => mm.state.edit === 0, 'live again');
+  await bankroll(mm, 5000);
+  assert.ok(mm.state.gold >= 5000, 'setting the bankroll while editing tops the gold up');
+  assert.strictEqual(D.SETTINGS.startGold.max, 20000, 'the bankroll slider reaches far enough to grow a final form');
 
   mm.send({ t: 'ability', a: 'barrage', x: 200, y: 200 });
   await waitFor(() => mm.state.mt.length >= 6, 'barrage puts six shells in the air');

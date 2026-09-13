@@ -54,6 +54,13 @@ track is in edit mode; everything else can change mid-round.
 | Runners | Upgrade points per finish and per death, base move speed, respawn time. |
 | Scaling | Lap bonus per finish, plus how fast runner upgrades, tower upgrades and tower build costs climb. |
 
+A building's Nth upgrade costs 18% more than its N-1th, whichever track it goes
+on. Pricing by the building's total rather than per track keeps every building
+the same distance from its final form: a one-track trap would otherwise need
+thirty levels on that single track and could never realistically get there.
+Growing one turret all the way is roughly 24,000 gold at default settings, so a
+final form is a whole-game goal rather than a purchase.
+
 The cost formulas live in `public/rules.js`, which the server requires and the
 browser loads, so a button never promises a price the server will not honour.
 
@@ -70,6 +77,7 @@ END and a connected path between them.
 | Towers (empty ground) | Turret, Sniper, Mortar (splash, blind up close), Tesla (chains), Pulse (hits everything around it, never misses), Laser (beam that burns hotter the longer it holds), Flamer, Frost (slow aura). |
 | Traps (on the path) | Spikes, Glue, Saw (shreds anyone standing on it), Mine (one big blast, then gone), Snare (roots you in place), Portal (sends you all the way back to START). |
 | Upgrades | Click a building to open its panel. Each has its own tracks: Damage, Range, Rate or Power. Every track is uncapped. |
+| Forms | Buildings do not have a level. They have a **form**, and they grow into a new one every five upgrades: at 5, 10, 15, 20, 25 and 30. Each form looks different, has its own name, and carries a stat bonus of its own. Past 30 the shape stops changing and upgrades only feed the stats. |
 | Abilities | Meteor, Barrage (six shells), Freeze, Overdrive (every tower fires double time), Blackout (runners lose every ability). |
 | Hotkeys | `1`-`9` pick a building, `X` sells the selected one, `Esc` deselects, right-click sells. |
 
@@ -92,7 +100,8 @@ and the Mastermind a victory point.
 | `X` | Medkit: heal instantly |
 
 Abilities have to be bought before their key does anything. Passive upgrades are
-Speed, Vitality, Regen, Armor, Grip (resist slows), Haste (shorter cooldowns),
+Speed, Vitality, **Regen** (which heals you while you are being shot, not only
+once you are left alone), Armor, Grip (resist slows), Haste (shorter cooldowns),
 Momentum (speeds up while you avoid damage), Scholar (more points per finish),
 Quick Revive and Last Stand.
 
@@ -125,7 +134,8 @@ send has a matching effect, and the test suite checks that.
 - `public/audio.js` — every sound, synthesized at runtime.
 - `test/game.test.js` — boots the server and plays a full game over real
   WebSockets: settings, map resizing, victory points, uncapped upgrades, every
-  ability, every trap, tower upgrade tracks, and a win. It also checks the
-  client files are served, that every sound the client asks for exists, and that
-  every server event has a visual effect. Run with `npm test`.
+  ability, every trap, tower upgrade tracks, the six form changes, healing under
+  fire, and a win. It also checks the client files are served, that every sound
+  the client asks for exists, and that every server event has a visual effect.
+  Run with `npm test`.
 - `render.yaml` — Render blueprint.

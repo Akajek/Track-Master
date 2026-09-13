@@ -387,18 +387,25 @@ function updateTowerPanel() {
   if (!tw) { selTower = null; panel.style.display = 'none'; panelSig = ''; return; }
   const def = defOf(tw.ty);
   const dyn = twDyn.get(tw.id) || {};
-  const sig = tw.id + '|' + JSON.stringify(tw.up) + '|' + S.gold + '|' + (dyn.d || 0);
+  const sig = tw.id + '|' + JSON.stringify(tw.up) + '|' + S.gold + '|' + (dyn.d || 0) + '|' + tw.ty;
   if (sig === panelSig) return;
   panelSig = sig;
   panel.style.display = '';
-  let html = '<b><span class="sw" style="background:' + def.color + '"></span> ' + def.name + '</b> ' +
-    '<span class="muted">level ' + RULES.level(tw.up) + '</span>' +
+  /* A building has no level: it has a shape, and a count of upgrades until the
+     next one. */
+  const form = RULES.form(tw.up), left = RULES.toNextForm(tw.up);
+  const nextName = form < RULES.MAX_FORM ? def.forms[form + 1] : null;
+  let html = '<b><span class="sw" style="background:' + def.color + '"></span> ' +
+    esc(RULES.formName(def, tw.up)) + '</b>' +
     (dyn.d ? ' <span class="warn">EMP&apos;d</span>' : '') +
+    '<div class="hint">' + esc(def.name) + ' · form ' + (form + 1) + ' of ' + (RULES.MAX_FORM + 1) + ' · ' +
+    (nextName ? left + ' more upgrade' + (left === 1 ? '' : 's') + ' &rarr; <b>' + esc(nextName) + '</b>'
+              : '<b class="gold">final form</b>') + '</div>' +
     '<div class="hint">' + RULES.statLine(def, tw.up) + '</div>';
+  const cost = RULES.trackCost(SET, def, RULES.upgrades(tw.up));
   for (const tr of def.tracks) {
-    const cost = RULES.trackCost(SET, def, tw.up[tr] || 0);
     html += '<div class="trk"><button data-trk="' + tr + '"' + (S.gold < cost ? ' disabled' : '') + '>' +
-      D.TRACKS[tr].name + ' &rarr; ' + ((tw.up[tr] || 0) + 1) + '</button>' +
+      D.TRACKS[tr].name + ' +' + ((tw.up[tr] || 0) + 1) + '</button>' +
       '<span class="gold">' + cost + '</span></div>';
   }
   if (!def.tracks.length) html += '<div class="hint">No upgrades for this one.</div>';
@@ -653,14 +660,80 @@ function drawTerrain() {
   terrainDirty = false;
 }
 
+/* A building's platform grows with its form: bigger, then armoured, then
+   ringed, then orbited, then lit from inside, then spiked, then haloed. The
+   weapon on top gets its own treatment per type, so all seven shapes read
+   differently at a glance. */
+function drawPlatform(cx, cy, form, color, now, dis) {
+  const r = 15 + form * 1.5;
+  ctx.fillStyle = '#0b1020';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  if (form >= 6) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.35 + 0.2 * Math.sin(now / 260);
+    ctx.beginPath(); ctx.arc(cx, cy, r + 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  if (form >= 5) {
+    ctx.fillStyle = dis ? '#4b5563' : color;
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3 + now / 2600;
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      ctx.lineTo(cx + Math.cos(a + 0.16) * (r + 6), cy + Math.sin(a + 0.16) * (r + 6));
+      ctx.lineTo(cx + Math.cos(a + 0.32) * r, cy + Math.sin(a + 0.32) * r);
+      ctx.fill();
+    }
+  }
+  if (form >= 1) {
+    ctx.strokeStyle = dis ? '#4b5563' : color; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4 + Math.PI / 8;
+      const px = cx + Math.cos(a) * (r - 1.5), py = cy + Math.sin(a) * (r - 1.5);
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath(); ctx.stroke();
+  }
+  if (form >= 2) {
+    ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, cy, r - 5, 0, Math.PI * 2); ctx.stroke();
+  }
+  if (form >= 3) {
+    ctx.fillStyle = dis ? '#4b5563' : color;
+    for (let i = 0; i < 3; i++) {
+      const a = now / 900 + i * Math.PI * 2 / 3;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a) * (r + 4), cy + Math.sin(a) * (r + 4), 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  if (form >= 4 && !dis) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    const g = ctx.createRadialGradient(cx, cy, 1, cx, cy, r);
+    g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.3 + 0.15 * Math.sin(now / 200);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* How many barrels, blades or coils a shape has grown. */
+function parts(form) { return form >= 6 ? 4 : form >= 4 ? 3 : form >= 2 ? 2 : 1; }
+
 function drawTower(tw, now) {
   const C = D.CELL, def = defOf(tw.ty), dyn = twDyn.get(tw.id) || {};
   const cx = (tw.gx + 0.5) * C, cy = (tw.gy + 0.5) * C;
-  const col = dyn.d ? '#4b5563' : def.color;
+  const dis = !!dyn.d;
+  const col = dis ? '#4b5563' : def.color;
+  const form = RULES.form(tw.up);
   const range = RULES.range(def, tw.up);
+  const grow = 1 + form * 0.07;
 
   if (def.onPath) {
-    drawTrap(tw, def, dyn, cx, cy, col, now);
+    drawTrap(tw, def, dyn, cx, cy, col, now, form);
   } else {
     /* aura footprints go under the body */
     if (tw.ty === 'frost') {
@@ -669,100 +742,120 @@ function drawTower(tw, now) {
       ctx.strokeStyle = 'rgba(165,243,252,.3)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(cx, cy, range, 0, Math.PI * 2); ctx.stroke();
     }
-    if (tw.ty === 'flame' && dyn.f && !dyn.d) {
+    if (tw.ty === 'flame' && dyn.f && !dis) {
       const g = ctx.createRadialGradient(cx, cy, 4, cx, cy, range);
       g.addColorStop(0, 'rgba(251,146,60,.45)'); g.addColorStop(1, 'rgba(251,113,133,0)');
       ctx.fillStyle = g;
       ctx.beginPath(); ctx.arc(cx, cy, range, 0, Math.PI * 2); ctx.fill();
     }
-    /* base */
-    ctx.fillStyle = '#0b1020';
-    ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.fill();
+
+    drawPlatform(cx, cy, form, def.color, now, dis);
+    const a = dyn.a || 0, n = parts(form);
     ctx.fillStyle = col;
-    const a = dyn.a || 0;
+
     if (tw.ty === 'sniper') {
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
-      ctx.fillStyle = '#0b1020'; ctx.fillRect(0, -3, 26, 6);
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(a); ctx.scale(grow, grow);
       ctx.fillStyle = col;
-      ctx.beginPath(); ctx.moveTo(-10, -9); ctx.lineTo(9, -7); ctx.lineTo(9, 7); ctx.lineTo(-10, 9); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#0b1020'; ctx.fillRect(8, -2, 18, 4);
+      ctx.beginPath(); ctx.moveTo(-10, -9); ctx.lineTo(9, -7); ctx.lineTo(9, 7); ctx.lineTo(-10, 9);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#0b1020';
+      for (let i = 0; i < n; i++) ctx.fillRect(8, -1.5 - (n - 1) * 2.5 + i * 5, 18 + form * 3, 3);
+      if (form >= 4) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(-4, 0, 2.5, 0, Math.PI * 2); ctx.fill(); }
       ctx.restore();
     } else if (tw.ty === 'mortar') {
-      ctx.beginPath(); ctx.arc(cx, cy, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 12 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
-      ctx.fillStyle = '#0b1020'; ctx.fillRect(0, -6, 15, 12);
+      ctx.fillStyle = '#0b1020';
+      for (let i = 0; i < n; i++) {
+        const off = (i - (n - 1) / 2) * 7;
+        ctx.fillRect(0, off - 3, 15 + form * 2, 6);
+      }
       ctx.restore();
     } else if (tw.ty === 'tesla') {
-      ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = dyn.d ? '#4b5563' : '#e9d5ff'; ctx.lineWidth = 1.5;
-      for (let i = 0; i < 3; i++) {
+      ctx.beginPath(); ctx.arc(cx, cy, 10 * grow, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = dis ? '#4b5563' : '#e9d5ff'; ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3 + form; i++) {
         ctx.beginPath();
-        ctx.arc(cx, cy, 5 + i * 3.5, now / 300 + i, now / 300 + i + 2.2);
+        ctx.arc(cx, cy, 5 + i * 3, now / 300 + i, now / 300 + i + 2.2);
         ctx.stroke();
       }
     } else if (tw.ty === 'pulse') {
-      ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 11 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = 'rgba(34,211,238,.5)'; ctx.lineWidth = 1.5;
-      const p = (now % 1400) / 1400;
-      ctx.globalAlpha = 1 - p;
-      ctx.beginPath(); ctx.arc(cx, cy, 12 + p * (range - 12), 0, Math.PI * 2); ctx.stroke();
+      for (let i = 0; i < 1 + Math.floor(form / 2); i++) {
+        const p = ((now + i * 470) % 1400) / 1400;
+        ctx.globalAlpha = 1 - p;
+        ctx.beginPath(); ctx.arc(cx, cy, 12 + p * (range - 12), 0, Math.PI * 2); ctx.stroke();
+      }
       ctx.globalAlpha = 1;
     } else if (tw.ty === 'laser') {
-      ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 11 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
-      ctx.fillStyle = '#0b1020'; ctx.fillRect(4, -4, 16, 8);
+      ctx.fillStyle = '#0b1020'; ctx.fillRect(4, -4 - form * 0.4, 16 + form * 2, 8 + form * 0.8);
       ctx.fillStyle = dyn.f ? '#fff' : '#7f1d1d';
-      ctx.beginPath(); ctx.arc(19, 0, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(19 + form * 2, 0, 3.5 + form * 0.4, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       if (dyn.f && dyn.bx !== undefined) {
         const heat = Math.min(1, (dyn.bt || 0) / (def.rampTime || 1));
+        const w = (2 + heat * 3) * (1 + form * 0.18);
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         ctx.strokeStyle = def.color; ctx.lineCap = 'round';
-        ctx.globalAlpha = 0.25; ctx.lineWidth = 9 + heat * 8;
+        ctx.globalAlpha = 0.25; ctx.lineWidth = w * 3.5;
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(dyn.bx, dyn.by); ctx.stroke();
-        ctx.globalAlpha = 1; ctx.lineWidth = 2 + heat * 3;
+        ctx.globalAlpha = 1; ctx.lineWidth = w;
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(dyn.bx, dyn.by); ctx.stroke();
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 + heat;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = Math.max(1, w * 0.4);
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(dyn.bx, dyn.by); ctx.stroke();
         ctx.restore();
       }
     } else if (tw.ty === 'flame') {
-      ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 11 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
-      ctx.fillStyle = '#0b1020'; ctx.fillRect(6, -5, 12, 10);
+      ctx.fillStyle = '#0b1020';
+      for (let i = 0; i < n; i++) {
+        const off = (i - (n - 1) / 2) * 6;
+        ctx.fillRect(6, off - 2.5, 12 + form, 5);
+      }
       ctx.restore();
     } else if (tw.ty === 'frost') {
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(now / 1600);
       ctx.fillStyle = col;
-      for (let i = 0; i < 3; i++) {
-        ctx.rotate(Math.PI / 3);
-        ctx.fillRect(-11, -2, 22, 4);
+      const arms = 3 + Math.floor(form / 2);
+      for (let i = 0; i < arms; i++) {
+        ctx.rotate(Math.PI / arms);
+        ctx.fillRect(-11 * grow, -2, 22 * grow, 4);
       }
       ctx.restore();
     } else {
-      ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 11 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.save(); ctx.translate(cx, cy); ctx.rotate(a);
-      ctx.strokeStyle = '#0b1020'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(17, 0); ctx.stroke();
+      ctx.strokeStyle = '#0b1020'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      for (let i = 0; i < n; i++) {
+        const off = (i - (n - 1) / 2) * 6;
+        ctx.beginPath(); ctx.moveTo(0, off); ctx.lineTo(17 + form * 1.5, off); ctx.stroke();
+      }
       ctx.restore();
     }
   }
 
-  /* upgrade pips along the top edge of the tile */
-  const lv = RULES.level(tw.up) - 1;
-  if (lv > 0) {
+  /* Progress toward the next shape: one dot per upgrade since the last one. */
+  const since = RULES.upgrades(tw.up) % RULES.FORM_STEP;
+  const maxed = form >= RULES.MAX_FORM;
+  if (maxed) {
+    ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 9px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText('MAX', tw.gx * C + 4, tw.gy * C + 10);
+  } else if (since > 0) {
     ctx.fillStyle = '#fbbf24';
-    for (let i = 0; i < Math.min(lv, 8); i++) {
-      ctx.beginPath(); ctx.arc(tw.gx * C + 6 + i * 4.4, tw.gy * C + 5, 1.7, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < since; i++) {
+      ctx.beginPath(); ctx.arc(tw.gx * C + 7 + i * 5, tw.gy * C + 5, 1.8, 0, Math.PI * 2); ctx.fill();
     }
   }
-  if (dyn.d) {
+  if (dis) {
     ctx.save(); ctx.globalAlpha = 0.5 + 0.5 * Math.sin(now / 90);
     ctx.fillStyle = '#facc15'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center';
     ctx.fillText('⚡', cx, cy + 5); ctx.restore();
   }
-  /* range preview for the selected or hovered building */
   const isSel = selTower === tw.gx + ',' + tw.gy;
   if (isMM() && range && (isSel || (hover && hover.x === tw.gx && hover.y === tw.gy))) {
     ctx.strokeStyle = isSel ? 'rgba(255,255,255,.75)' : 'rgba(255,255,255,.35)';
@@ -776,70 +869,90 @@ function drawTower(tw, now) {
   }
 }
 
-function drawTrap(tw, def, dyn, cx, cy, col, now) {
-  const C = D.CELL;
-  const ready = !dyn.c;
+function drawTrap(tw, def, dyn, cx, cy, col, now, form) {
+  const C = D.CELL, dis = !!dyn.d, ready = !dyn.c;
+  const grow = 1 + form * 0.06;
   switch (tw.ty) {
-    case 'spikes':
-      ctx.fillStyle = dyn.d ? '#555' : '#e5e7eb';
-      for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
-        const px = tw.gx * C + 8 + i * 12, py = tw.gy * C + 8 + j * 12;
-        ctx.beginPath(); ctx.moveTo(px - 4, py + 4); ctx.lineTo(px, py - 5); ctx.lineTo(px + 4, py + 4); ctx.fill();
+    case 'spikes': {
+      const n = 3 + Math.floor(form / 2);
+      const step = (C - 10) / n;
+      ctx.fillStyle = dis ? '#555' : '#e5e7eb';
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+        const px = tw.gx * C + 5 + step * (i + 0.5), py = tw.gy * C + 5 + step * (j + 0.5);
+        const h = 5 * grow;
+        ctx.beginPath();
+        ctx.moveTo(px - h * 0.8, py + h * 0.8); ctx.lineTo(px, py - h); ctx.lineTo(px + h * 0.8, py + h * 0.8);
+        ctx.fill();
       }
       break;
+    }
     case 'glue':
-      ctx.fillStyle = dyn.d ? 'rgba(120,120,120,.6)' : 'rgba(163,230,53,.8)';
-      ctx.beginPath(); ctx.ellipse(cx, cy, 16, 13, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = dis ? 'rgba(120,120,120,.6)' : 'rgba(163,230,53,' + (0.6 + form * 0.06) + ')';
+      ctx.beginPath(); ctx.ellipse(cx, cy, 16 * grow, 13 * grow, 0, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.ellipse(cx + 9, cy - 8, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
+      for (let i = 0; i < form; i++) {
+        const a = i * 1.7 + now / 1800;
+        ctx.beginPath(); ctx.arc(cx + Math.cos(a) * 13, cy + Math.sin(a) * 10, 2.5, 0, Math.PI * 2); ctx.fill();
+      }
       break;
     case 'saw': {
-      const spin = now / 90;
-      ctx.save(); ctx.translate(cx, cy); ctx.rotate(spin);
-      ctx.fillStyle = dyn.d ? '#4b5563' : '#cbd5e1';
-      for (let i = 0; i < 8; i++) {
-        ctx.rotate(Math.PI / 4);
-        ctx.beginPath(); ctx.moveTo(0, -16); ctx.lineTo(5, -9); ctx.lineTo(-5, -9); ctx.closePath(); ctx.fill();
+      const teeth = 8 + form * 2, rad = 16 * grow;
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(now / (90 - form * 8));
+      ctx.fillStyle = dis ? '#4b5563' : '#cbd5e1';
+      for (let i = 0; i < teeth; i++) {
+        ctx.rotate(Math.PI * 2 / teeth);
+        ctx.beginPath(); ctx.moveTo(0, -rad); ctx.lineTo(4.5, -rad + 7); ctx.lineTo(-4.5, -rad + 7);
+        ctx.closePath(); ctx.fill();
       }
-      ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, 9 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#0b1020'; ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
       break;
     }
-    case 'mine':
+    case 'mine': {
+      const prongs = 6 + form;
       ctx.fillStyle = '#1f2937';
-      ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, 11 * grow, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#4b5563';
-      for (let i = 0; i < 6; i++) {
-        const a = i * Math.PI / 3;
-        ctx.fillRect(cx + Math.cos(a) * 11 - 1.5, cy + Math.sin(a) * 11 - 1.5, 3, 3);
+      for (let i = 0; i < prongs; i++) {
+        const a = i * Math.PI * 2 / prongs;
+        ctx.fillRect(cx + Math.cos(a) * 11 * grow - 1.5, cy + Math.sin(a) * 11 * grow - 1.5, 3, 3);
       }
-      ctx.fillStyle = (now % 900 < 450) ? '#ef4444' : '#7f1d1d';
-      ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = (now % Math.max(220, 900 - form * 110) < 450) ? '#ef4444' : '#7f1d1d';
+      ctx.beginPath(); ctx.arc(cx, cy, 4 + form * 0.4, 0, Math.PI * 2); ctx.fill();
       break;
-    case 'snare':
-      ctx.strokeStyle = dyn.d ? '#4b5563' : ready ? col : 'rgba(252,211,77,.25)';
+    }
+    case 'snare': {
+      const teeth = 8 + form * 2;
+      ctx.strokeStyle = dis ? '#4b5563' : ready ? col : 'rgba(252,211,77,.25)';
       ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(cx, cy, 13, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, 13 * grow, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = ctx.strokeStyle;
-      for (let i = 0; i < 8; i++) {
-        const a = i * Math.PI / 4;
+      for (let i = 0; i < teeth; i++) {
+        const a = i * Math.PI * 2 / teeth;
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * 13, cy + Math.sin(a) * 13);
-        ctx.lineTo(cx + Math.cos(a + 0.2) * 6, cy + Math.sin(a + 0.2) * 6);
-        ctx.lineTo(cx + Math.cos(a - 0.2) * 6, cy + Math.sin(a - 0.2) * 6);
+        ctx.moveTo(cx + Math.cos(a) * 13 * grow, cy + Math.sin(a) * 13 * grow);
+        ctx.lineTo(cx + Math.cos(a + 0.18) * 6, cy + Math.sin(a + 0.18) * 6);
+        ctx.lineTo(cx + Math.cos(a - 0.18) * 6, cy + Math.sin(a - 0.18) * 6);
         ctx.fill();
       }
       break;
+    }
     case 'portal': {
-      const t = now / 420;
+      const t = now / 420, rings = 3 + form;
       ctx.save();
       ctx.globalAlpha = ready ? 1 : 0.3;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < rings; i++) {
         ctx.strokeStyle = i ? 'rgba(192,132,252,.7)' : '#e9d5ff';
-        ctx.lineWidth = 2.5 - i * 0.6;
+        ctx.lineWidth = Math.max(0.8, 2.5 - i * 0.35);
         ctx.beginPath();
-        ctx.ellipse(cx, cy, 15 - i * 3.5, 7 - i * 1.6, t + i * 1.1, 0, Math.PI * 2);
+        ctx.ellipse(cx, cy, Math.max(2, (15 - i * 2.2) * grow), Math.max(1, (7 - i) * grow), t + i * 1.1, 0, Math.PI * 2);
         ctx.stroke();
+      }
+      if (form >= 4 && ready) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = 'rgba(192,132,252,.25)';
+        ctx.beginPath(); ctx.arc(cx, cy, 8 * grow, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
       break;

@@ -138,6 +138,14 @@ const SFX = (() => {
     vpRun:   () => chord([659, 880], { type: 'triangle', dur: 0.25, v: 0.2, gap: 0.08 }),
     vpMM:    () => chord([330, 262], { type: 'sawtooth', dur: 0.25, v: 0.16, gap: 0.08 }),
     levelup: p => chord([659, 880, 1175], { type: 'triangle', dur: 0.18, v: 0.2, gap: 0.05, pan: p }),
+    /* A building growing into its next shape: heavier and longer than a plain
+       upgrade, because it only happens every fifth one. */
+    morph:   p => {
+      chord([262, 392, 523, 784, 1047], { type: 'triangle', dur: 0.4, v: 0.26, gap: 0.06, pan: p });
+      tone({ f: 90, f2: 220, type: 'sawtooth', dur: 0.5, v: 0.24, pan: p });
+      noise({ filter: 'bandpass', f: 600, f2: 4000, q: 3, dur: 0.5, a: 0.06, v: 0.18, pan: p });
+      noise({ filter: 'highpass', f: 5000, dur: 0.6, v: 0.09, delay: 0.2, pan: p });
+    },
     heal:    p => { chord([523, 784], { type: 'sine', dur: 0.25, v: 0.2, gap: 0.06, pan: p }); noise({ filter: 'highpass', f: 3000, dur: 0.3, v: 0.06, pan: p }); },
     /* runner abilities */
     emp:     p => { noise({ filter: 'bandpass', f: 300, f2: 5000, q: 4, dur: 0.35, v: 0.3, pan: p }); tone({ f: 90, f2: 1200, type: 'sawtooth', dur: 0.3, v: 0.1, pan: p }); tone({ f: 1800, f2: 200, type: 'sine', dur: 0.25, v: 0.1, delay: 0.28, pan: p }); },
@@ -213,6 +221,7 @@ const SFX = (() => {
       case 'build': V.build(px(e.x)); break;
       case 'sell': V.sell(px(e.x)); break;
       case 'levelup': V.levelup(px(e.x)); break;
+      case 'morph': V.morph(px(e.x)); break;
     }
   }
 

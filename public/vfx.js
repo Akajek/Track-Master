@@ -260,6 +260,20 @@ const VFX = (() => {
         }
         if (!e.tower) text(e.x, e.y - 30, 'LEVEL UP', { c: '#4ade80', size: 12, life: 1 });
         break;
+      case 'morph':
+        /* A shape change earns more than an upgrade sparkle. */
+        ring(e.x, e.y, { r0: 60, r1: 8, life: 0.5, c: e.c || '#fbbf24', w: 4, ease: 'in' });
+        ring(e.x, e.y, { r0: 4, r1: 52, life: 0.6, c: '#fff', w: 3 });
+        ring(e.x, e.y, { r0: 4, r1: 76, life: 0.8, c: e.c || '#fbbf24', w: 2 });
+        burst(e.x, e.y, { n: 30, c: [e.c || '#fbbf24', '#fff', '#fde68a'], spd0: 50, spd1: 240,
+          size0: 1.5, size1: 4, life0: 0.35, life1: 0.9 });
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          beam(e.x, e.y, e.x + Math.cos(a) * 46, e.y + Math.sin(a) * 46, { c: '#fff', w: 2, life: 0.3 });
+        }
+        if (e.n) text(e.x, e.y - 34, e.n.toUpperCase(), { c: e.c || '#fbbf24', size: 15, life: 1.6, vy: -20 });
+        shake(3);
+        break;
       case 'win':
         flash(e.team === 'runners' ? '#065f46' : '#7f1d1d', 0.5);
         shake(10);

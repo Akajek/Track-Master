@@ -15,16 +15,47 @@ const RULES = {
     return Math.max(1, Math.round(base * set.upGrow / 100));
   },
   buildCost(set, def) { return Math.max(1, Math.round(def.cost * set.towerCost / 100)); },
-  trackCost(set, def, lv) { return Math.max(1, Math.round(def.cost * 0.6 * Math.pow(1.55, lv) * set.twGrow / 100)); },
+  /* Upgrades are exponential: a building's Nth upgrade costs 18% more than its
+     N-1th, whichever track it goes on. Pricing by the building's total rather
+     than by the track keeps every building the same distance from its final
+     form -- otherwise a trap with one track would need thirty levels on that
+     one track and could never realistically get there. */
+  TRACK_EXP: 1.18,
+  trackCost(set, def, totalUpgrades) {
+    return Math.max(1, Math.round(def.cost * 0.6 * Math.pow(RULES.TRACK_EXP, totalUpgrades) * set.twGrow / 100));
+  },
   sellValue(spent) { return Math.round(spent * 0.7); },
 
+  /* ---------------------------------------------------------------- forms */
+  /* Buildings do not have a level. They have a FORM, and they change shape
+     every five upgrades: at 5, 10, 15, 20, 25 and 30 total upgrades across all
+     of their tracks. Past the last form the shape stops changing and further
+     upgrades only feed the stats. */
+  FORM_STEP: 5,
+  MAX_FORM: 6,
+  upgrades(up) { let n = 0; for (const k in up) n += up[k] || 0; return n; },
+  form(up) { return Math.min(RULES.MAX_FORM, Math.floor(RULES.upgrades(up) / RULES.FORM_STEP)); },
+  /* How many more upgrades until the next shape; 0 once the last form is out. */
+  toNextForm(up) {
+    const f = RULES.form(up);
+    if (f >= RULES.MAX_FORM) return 0;
+    return (f + 1) * RULES.FORM_STEP - RULES.upgrades(up);
+  },
+  formName(def, up) { return (def.forms && def.forms[RULES.form(up)]) || def.name; },
+
   /* --------------------------------------------------------- tower stats */
-  dmg(def, up)   { return (def.dmg || def.dps || 0) * Math.pow(1.25, up.dmg || 0); },
-  range(def, up) { return (def.range || 0) * Math.pow(1.12, up.rng || 0); },
-  rate(def, up)  { return (def.rate || 0) * Math.pow(1.18, up.spd || 0); },
+  /* Each new form is worth a bonus of its own on top of the tracks, so growing
+     a shape is always a real step up and not just a new coat of paint. */
+  dmg(def, up)   { return (def.dmg || def.dps || 0) * Math.pow(1.25, up.dmg || 0) * Math.pow(1.18, RULES.form(up)); },
+  range(def, up) { return (def.range || 0) * Math.pow(1.12, up.rng || 0) * Math.pow(1.05, RULES.form(up)); },
+  rate(def, up)  { return (def.rate || 0) * Math.pow(1.18, up.spd || 0) * Math.pow(1.07, RULES.form(up)); },
   slow(def, up)  { return 1 - (1 - (def.slow || 0)) * Math.pow(0.88, up.pow || 0); },
   root(def, up)  { return (def.root || 0) * Math.pow(1.15, up.pow || 0); },
-  level(up)      { let n = 1; for (const k in up) n += up[k]; return n; },
+  splash(def, up) { return (def.splash || 0) * Math.pow(1.12, up.pow || 0); },
+  /* Traps that re-arm: the Rate track and each form shorten the wait. */
+  cooldown(def, up) {
+    return (def.cd || 0) / (Math.pow(1.18, up.spd || 0) * Math.pow(1.07, RULES.form(up)));
+  },
 
   /* -------------------------------------------------------- runner stats */
   speed(set, up, laps) { return set.runSpeed * Math.pow(1.09, up.speed) * (1 + laps * set.lapBonus / 100); },
@@ -64,10 +95,10 @@ const RULES = {
     if (def.minRange) out.push('blind under ' + def.minRange);
     if (def.slow) out.push('slow ' + Math.round(RULES.slow(def, up) * 100) + '%');
     if (def.root) out.push('root ' + RULES.root(def, up).toFixed(1) + 's');
-    if (def.splash) out.push('splash ' + def.splash);
+    if (def.splash) out.push('splash ' + Math.round(RULES.splash(def, up)));
     if (def.chain) out.push('chains ' + def.chain);
     if (def.rampMax) out.push('ramps to x' + def.rampMax);
-    if (def.cd) out.push('every ' + def.cd + 's');
+    if (def.cd) out.push('every ' + RULES.cooldown(def, up).toFixed(1) + 's');
     if (def.once) out.push('single use');
     return out.join(' · ');
   },

@@ -61,7 +61,7 @@ const SETTINGS = {
   vpTarget:   { g: 'Victory', label: 'Victory points to win',  min: 3,  max: 100,  step: 1,   def: 15 },
   vpFinish:   { g: 'Victory', label: 'VP per runner finish',   min: 1,  max: 10,   step: 1,   def: 1 },
   vpKill:     { g: 'Victory', label: 'VP per runner killed',   min: 1,  max: 10,   step: 1,   def: 1 },
-  startGold:  { g: 'Income',  label: 'Mastermind start gold',  min: 0,  max: 5000, step: 50,  def: 400 },
+  startGold:  { g: 'Income',  label: 'Mastermind start gold',  min: 0,  max: 20000, step: 100, def: 400 },
   income:     { g: 'Income',  label: 'Gold per second',        min: 0,  max: 60,   step: 1,   def: 8 },
   incomeGrow: { g: 'Income',  label: 'Income growth %/min',    min: 0,  max: 200,  step: 10,  def: 20 },
   goldKill:   { g: 'Income',  label: 'Gold per kill',          min: 0,  max: 500,  step: 10,  def: 60 },
@@ -80,35 +80,49 @@ const SETTINGS = {
 /* kind decides how the tick treats it. tracks are the upgrade lines it sells. */
 const TOWERS = {
   turret: { name: 'Turret', cost: 50,  kind: 'shoot',   range: 130, dmg: 12, rate: 2.2, proj: 420,
-    color: '#7dd3fc', tracks: ['dmg', 'rng', 'spd'], desc: 'Reliable single-target shooter.' },
+    color: '#7dd3fc', tracks: ['dmg', 'rng', 'spd'], desc: 'Reliable single-target shooter.' ,
+    forms: ['Turret', 'Twin Turret', 'Autocannon', 'Gatling', 'Vulcan', 'Warmachine', 'Annihilator'] },
   sniper: { name: 'Sniper', cost: 120, kind: 'hitscan', range: 290, dmg: 55, rate: 0.55,
-    color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow.' },
+    color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow.' ,
+    forms: ['Sniper', 'Marksman', 'Longshot', 'Railgun', 'Deadeye', 'Executioner', 'Godshot'] },
   mortar: { name: 'Mortar', cost: 150, kind: 'lob',     range: 240, minRange: 70, dmg: 45, splash: 65, rate: 0.6, proj: 240,
-    color: '#fdba74', tracks: ['dmg', 'rng', 'spd'], desc: 'Lobs shells. Splash damage. Blind up close.' },
+    color: '#fdba74', tracks: ['dmg', 'rng', 'spd', 'pow'], desc: 'Lobs shells. Splash damage. Blind up close.' ,
+    forms: ['Mortar', 'Howitzer', 'Siege Mortar', 'Bombard', 'Artillery', 'Devastator', 'Apocalypse'] },
   tesla:  { name: 'Tesla',  cost: 130, kind: 'chain',   range: 120, dmg: 22, rate: 1.1, chain: 3, chainRange: 95,
-    color: '#c4b5fd', tracks: ['dmg', 'rng', 'spd'], desc: 'Zaps a runner, chains to nearby ones.' },
+    color: '#c4b5fd', tracks: ['dmg', 'rng', 'spd'], desc: 'Zaps a runner, chains to nearby ones.' ,
+    forms: ['Tesla Coil', 'Arc Coil', 'Storm Coil', 'Thunderhead', 'Tempest', 'Maelstrom', 'Zeus'] },
   pulse:  { name: 'Pulse',  cost: 170, kind: 'pulse',   range: 110, dmg: 38, rate: 0.7,
-    color: '#22d3ee', tracks: ['dmg', 'rng', 'spd'], desc: 'Slams everything around it. Never misses.' },
+    color: '#22d3ee', tracks: ['dmg', 'rng', 'spd'], desc: 'Slams everything around it. Never misses.' ,
+    forms: ['Pulse Node', 'Shockwave', 'Resonator', 'Quake Node', 'Cataclysm', 'Seismic Core', 'Singularity'] },
   laser:  { name: 'Laser',  cost: 200, kind: 'beam',    range: 180, dps: 20, rampMax: 3.2, rampTime: 2.5,
-    color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds.' },
+    color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds.' ,
+    forms: ['Laser', 'Beam Emitter', 'Focused Beam', 'Prism Lance', 'Solar Lance', 'Starfire', 'Nova Lance'] },
   flame:  { name: 'Flamer', cost: 90,  kind: 'aura',    range: 78,  dps: 28,
-    color: '#fb7185', tracks: ['dmg', 'rng'], desc: 'Short range. Burns everything nearby, constantly.' },
+    color: '#fb7185', tracks: ['dmg', 'rng'], desc: 'Short range. Burns everything nearby, constantly.' ,
+    forms: ['Flamer', 'Burner', 'Incinerator', 'Pyre', 'Inferno', 'Hellmouth', 'Sunforge'] },
   frost:  { name: 'Frost',  cost: 80,  kind: 'slow',    range: 105, slow: 0.5,
-    color: '#a5f3fc', tracks: ['pow', 'rng'], desc: 'Slows every runner in range.' },
+    color: '#a5f3fc', tracks: ['pow', 'rng'], desc: 'Slows every runner in range.' ,
+    forms: ['Frost Emitter', 'Chiller', 'Cryo Node', 'Deep Freeze', 'Glacier', 'Absolute Zero', 'Winter'] },
 };
 const TRAPS = {
   spikes: { name: 'Spikes', cost: 40,  kind: 'spikes', dmg: 22, cd: 0.9,
-    color: '#d1d5db', tracks: ['dmg'], desc: 'Bites whoever steps on it.' },
+    color: '#d1d5db', tracks: ['dmg', 'spd'], desc: 'Bites whoever steps on it.' ,
+    forms: ['Spikes', 'Barbs', 'Caltrops', 'Spike Pit', 'Impaler Bed', 'Spine Field', 'Thornmaw'] },
   glue:   { name: 'Glue',   cost: 30,  kind: 'glue',   slow: 0.65,
-    color: '#bef264', tracks: ['pow'], desc: 'Very sticky. Slows anyone standing in it.' },
+    color: '#bef264', tracks: ['pow'], desc: 'Very sticky. Slows anyone standing in it.' ,
+    forms: ['Glue', 'Tar', 'Sludge', 'Quagmire', 'Tar Pit', 'Mire', 'Molasses Sea'] },
   saw:    { name: 'Saw',    cost: 110, kind: 'saw',    dps: 45,
-    color: '#94a3b8', tracks: ['dmg'], desc: 'Spinning blade. Shreds anyone standing on it.' },
+    color: '#94a3b8', tracks: ['dmg'], desc: 'Spinning blade. Shreds anyone standing on it.' ,
+    forms: ['Saw', 'Buzzsaw', 'Ripper', 'Shredder', 'Mulcher', 'Bonesaw', 'Meatgrinder'] },
   mine:   { name: 'Mine',   cost: 70,  kind: 'mine',   dmg: 95, splash: 70, once: 1,
-    color: '#f97316', tracks: ['dmg'], desc: 'One big blast, then it is gone for good.' },
+    color: '#f97316', tracks: ['dmg', 'pow'], desc: 'One big blast, then it is gone for good.' ,
+    forms: ['Mine', 'Charge', 'Bomb', 'Cluster Mine', 'Demolition Charge', 'Bunker Buster', 'Doomsday Mine'] },
   snare:  { name: 'Snare',  cost: 90,  kind: 'snare',  root: 1.2, cd: 6,
-    color: '#fcd34d', tracks: ['pow'], desc: 'Roots a runner in place. Cannot move at all.' },
+    color: '#fcd34d', tracks: ['pow', 'spd'], desc: 'Roots a runner in place. Cannot move at all.' ,
+    forms: ['Snare', 'Trap Jaws', 'Bear Trap', 'Bramble Snare', 'Iron Maiden', 'Root Cage', 'Stasis Field'] },
   portal: { name: 'Portal', cost: 140, kind: 'portal', cd: 10,
-    color: '#c084fc', tracks: [], desc: 'Sends the runner all the way back to the start.' },
+    color: '#c084fc', tracks: ['spd'], desc: 'Sends the runner all the way back to the start.' ,
+    forms: ['Portal', 'Rift', 'Warp Gate', 'Void Gate', 'Wormhole', 'Event Horizon', 'Oblivion'] },
 };
 for (const k in TRAPS) TRAPS[k].onPath = true;
 const BUILD = Object.assign({}, TOWERS, TRAPS);
@@ -116,7 +130,7 @@ const BUILD = Object.assign({}, TOWERS, TRAPS);
 const TRACKS = {
   dmg: { name: 'Damage', desc: '+25% damage' },
   rng: { name: 'Range',  desc: '+12% range' },
-  spd: { name: 'Rate',   desc: '+18% fire rate' },
+  spd: { name: 'Rate',   desc: '+18% fire rate, or a faster re-arm for a trap' },
   pow: { name: 'Power',  desc: 'stronger effect' },
 };
 
@@ -132,7 +146,7 @@ const MM_ABILITIES = {
 const UPGRADES = {
   speed:    { name: 'Speed',       kind: 'passive', desc: '+9% move speed' },
   hp:       { name: 'Vitality',    kind: 'passive', desc: '+25 max HP' },
-  regen:    { name: 'Regen',       kind: 'passive', desc: '+2 HP/s out of combat' },
+  regen:    { name: 'Regen',       kind: 'passive', desc: '+2 HP/s, even while being shot' },
   armor:    { name: 'Armor',       kind: 'passive', desc: 'Less damage taken (diminishing)' },
   grip:     { name: 'Grip',        kind: 'passive', desc: 'Resist slows and glue' },
   haste:    { name: 'Haste',       kind: 'passive', desc: 'Shorter ability cooldowns' },
@@ -158,13 +172,15 @@ const DEFS = { CELL, T, RUNNER_R, TOWERS, TRAPS, BUILD, TRACKS, MM_ABILITIES, UP
    the numbers the server is about to charge. These are just room-shaped wrappers. */
 const upgradeCost = (room, key, lv) => RULES.upgradeCost(room.set, UPGRADES[key], lv);
 const buildCost   = (room, type)    => RULES.buildCost(room.set, BUILD[type]);
-const trackCost   = (room, tw, tr)  => RULES.trackCost(room.set, BUILD[tw.type], tw.up[tr] || 0);
+const trackCost   = (room, tw)      => RULES.trackCost(room.set, BUILD[tw.type], RULES.upgrades(tw.up));
 const twDmg   = tw => RULES.dmg(BUILD[tw.type], tw.up);
 const twRange = tw => RULES.range(BUILD[tw.type], tw.up);
 const twRate  = tw => RULES.rate(BUILD[tw.type], tw.up);
 const twSlow  = tw => RULES.slow(BUILD[tw.type], tw.up);
 const twRoot  = tw => RULES.root(BUILD[tw.type], tw.up);
-const twLevel = tw => RULES.level(tw.up);
+const twSplash = tw => RULES.splash(BUILD[tw.type], tw.up);
+const twCd    = tw => RULES.cooldown(BUILD[tw.type], tw.up);
+const twForm  = tw => RULES.form(tw.up);
 
 const rSpeed   = (room, p) => RULES.speed(room.set, p.up, p.laps);
 const rMaxHp   = (room, p) => RULES.maxHp(room.set, p.up, p.laps);
@@ -530,9 +546,9 @@ function tick(room, now) {
       if (ix || iy) tryMove(room, p, ix * spd * dt, iy * spd * dt);
     }
 
-    if (now - p.lastHurt > 2000 && p.hp < p.maxHp) {
-      p.hp = Math.min(p.maxHp, p.hp + (2 + 2 * p.up.regen) * dt);
-    }
+    /* Regeneration does not care whether you are being shot at: it races the
+       incoming damage instead of waiting politely for it to stop. */
+    if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + (2 + 2 * p.up.regen) * dt);
     if (p.shieldUntil && now > p.shieldUntil && p.shield > 0) { p.shield = 0; }
 
     if (tileAt(room, Math.floor(p.x / CELL), Math.floor(p.y / CELL)) === T.END) finish(room, p, now);
@@ -607,7 +623,7 @@ function tick(room, now) {
       } else if (def.kind === 'lob') {
         const dist = Math.hypot(best.x - tw.x, best.y - tw.y);
         room.projectiles.push({ x: tw.x, y: tw.y, tx: best.x, ty: best.y, sx: tw.x, sy: tw.y, t: 0,
-          dur: dist / def.proj, dmg, splash: def.splash, c: def.color, kind: 'lob' });
+          dur: dist / def.proj, dmg, splash: twSplash(tw), c: def.color, kind: 'lob' });
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'mortar', a: Math.round(tw.aim * 100) / 100 });
       } else if (def.kind === 'chain') {
         const hit = [best]; let last = best, d = dmg;
@@ -679,26 +695,26 @@ function stepOnTrap(room, tw, p, now, dt) {
       tw.firing = true;
       break;
     case 'spikes':
-      if (now - (p.trapAt[tw.id] || 0) > def.cd * 1000) {
+      if (now - (p.trapAt[tw.id] || 0) > twCd(tw) * 1000) {
         p.trapAt[tw.id] = now;
         damage(room, p, twDmg(tw), now, 'spikes');
       }
       break;
     case 'mine':
-      explode(room, tw.x, tw.y, def.splash, twDmg(tw), now, '#f97316');
+      explode(room, tw.x, tw.y, twSplash(tw), twDmg(tw), now, '#f97316');
       room.towers.delete(tw.gx + ',' + tw.gy);
       room.towersDirty = true;
       break;
     case 'snare':
       if (tw.cdUntil <= now) {
-        tw.cdUntil = now + def.cd * 1000;
+        tw.cdUntil = now + twCd(tw) * 1000;
         p.rootUntil = now + twRoot(tw) * 1000;
         ev(room, { k: 'snare', x: Math.round(p.x), y: Math.round(p.y), d: twRoot(tw) });
       }
       break;
     case 'portal':
       if (tw.cdUntil <= now) {
-        tw.cdUntil = now + def.cd * 1000;
+        tw.cdUntil = now + twCd(tw) * 1000;
         ev(room, { k: 'portal', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
         placeAtStart(room, p, now);
         ev(room, { k: 'portalout', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
@@ -725,7 +741,7 @@ function gridMsg(room) {
 }
 function towersMsg(room) {
   const tw = [...room.towers.values()].map(t => ({
-    id: t.id, ty: t.type, gx: t.gx, gy: t.gy, up: t.up, sp: t.spent, lv: twLevel(t),
+    id: t.id, ty: t.type, gx: t.gx, gy: t.gy, up: t.up, sp: t.spent,
   }));
   return JSON.stringify({ t: 'tw', tw });
 }
@@ -1079,11 +1095,19 @@ function onMessage(ws, raw) {
       if (!tw) break;
       const track = m.track;
       if (!BUILD[tw.type].tracks.includes(track)) break;
-      const cost = trackCost(room, tw, track);
+      const cost = trackCost(room, tw);
       if (room.gold < cost) { note(p, 'Need ' + cost + ' gold for that upgrade.', 'warn'); break; }
+      const was = twForm(tw);
       room.gold -= cost; tw.spent += cost; tw.up[track]++;
       room.towersDirty = true;
-      ev(room, { k: 'levelup', x: tw.x, y: tw.y, c: BUILD[tw.type].color, tower: 1 });
+      /* Every fifth upgrade grows the building into its next shape. */
+      if (twForm(tw) > was) {
+        const name = RULES.formName(BUILD[tw.type], tw.up);
+        ev(room, { k: 'morph', x: tw.x, y: tw.y, c: BUILD[tw.type].color, f: twForm(tw), n: name });
+        shout(room, BUILD[tw.type].name + ' grew into a ' + name + '!', 'warn');
+      } else {
+        ev(room, { k: 'levelup', x: tw.x, y: tw.y, c: BUILD[tw.type].color, tower: 1 });
+      }
       break;
     }
 
