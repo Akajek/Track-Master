@@ -1,0 +1,17 @@
+{
+  "name": "track-master",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Asymmetric multiplayer tower defense: one Mastermind builds the track and towers, runners try to reach the end.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/game.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

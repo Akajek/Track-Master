@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: track-master
+    runtime: node
+    plan: free
+    # Put the server near the players: every move goes player -> server -> everyone.
+    # Options: frankfurt, oregon, ohio, virginia, singapore.
+    # NOTE: Render cannot move an existing service between regions -- changing this
+    # means deleting the service and applying the blueprint again.
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
