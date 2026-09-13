@@ -56,71 +56,74 @@ const SPAWN_GRACE = 1500;      /* invulnerable for a moment after (re)spawning *
    settings panel straight from this table, so adding a row here is all it takes
    to get a working slider. */
 const SETTINGS = {
-  gw:         { g: 'Map',     label: 'Map width',              min: 12, max: 48,   step: 1,   def: 24, rebuild: 1 },
-  gh:         { g: 'Map',     label: 'Map height',             min: 10, max: 32,   step: 1,   def: 16, rebuild: 1 },
-  vpTarget:   { g: 'Victory', label: 'Victory points to win',  min: 3,  max: 100,  step: 1,   def: 15 },
-  vpFinish:   { g: 'Victory', label: 'VP per runner finish',   min: 1,  max: 10,   step: 1,   def: 1 },
-  vpKill:     { g: 'Victory', label: 'VP per runner killed',   min: 1,  max: 10,   step: 1,   def: 1 },
-  startGold:  { g: 'Income',  label: 'Mastermind start gold',  min: 0,  max: 20000, step: 100, def: 400 },
-  income:     { g: 'Income',  label: 'Gold per second',        min: 0,  max: 60,   step: 1,   def: 8 },
-  incomeGrow: { g: 'Income',  label: 'Income growth %/min',    min: 0,  max: 200,  step: 10,  def: 20 },
-  goldKill:   { g: 'Income',  label: 'Gold per kill',          min: 0,  max: 500,  step: 10,  def: 60 },
-  goldFinish: { g: 'Income',  label: 'Gold per runner finish', min: 0,  max: 500,  step: 10,  def: 30 },
-  ptsFinish:  { g: 'Runners', label: 'Upgrade points / finish', min: 1, max: 20,   step: 1,   def: 3 },
-  ptsDeath:   { g: 'Runners', label: 'Upgrade points / death',  min: 0, max: 10,   step: 1,   def: 1 },
-  runSpeed:   { g: 'Runners', label: 'Base runner speed',      min: 80, max: 320,  step: 10,  def: 150 },
-  respawn:    { g: 'Runners', label: 'Respawn seconds',        min: 0.5, max: 10,  step: 0.5, def: 2.5 },
-  lapBonus:   { g: 'Scaling', label: 'Lap bonus % per finish', min: 0,  max: 25,   step: 1,   def: 5 },
-  upGrow:     { g: 'Scaling', label: 'Runner upgrade cost %',  min: 25, max: 300,  step: 5,   def: 100 },
-  twGrow:     { g: 'Scaling', label: 'Tower upgrade cost %',   min: 25, max: 300,  step: 5,   def: 100 },
-  towerCost:  { g: 'Scaling', label: 'Tower build cost %',     min: 25, max: 300,  step: 5,   def: 100 },
+  gw:         { g: 'Map',     label: 'Map width',               min: 12,  max: 48,    step: 1,   def: 24, rebuild: 1 },
+  gh:         { g: 'Map',     label: 'Map height',              min: 10,  max: 32,    step: 1,   def: 16, rebuild: 1 },
+  towerPower: { g: 'Balance', label: 'Tower damage %',          min: 10,  max: 300,   step: 5,   def: 100 },
+  runnerHp:   { g: 'Balance', label: 'Runner health %',         min: 25,  max: 400,   step: 5,   def: 100 },
+  runSpeed:   { g: 'Balance', label: 'Base runner speed',       min: 60,  max: 600,   step: 10,  def: 165 },
+  respawn:    { g: 'Balance', label: 'Respawn seconds',         min: 0.5, max: 20,    step: 0.5, def: 2.5 },
+  vpTarget:   { g: 'Victory', label: 'Victory points to win',   min: 3,   max: 100,   step: 1,   def: 15 },
+  vpFinish:   { g: 'Victory', label: 'VP per runner finish',    min: 1,   max: 20,    step: 1,   def: 2 },
+  vpKill:     { g: 'Victory', label: 'VP per runner killed',    min: 1,   max: 20,    step: 1,   def: 1 },
+  startGold:  { g: 'Income',  label: 'Mastermind start gold',   min: 0,   max: 20000, step: 100, def: 300 },
+  income:     { g: 'Income',  label: 'Gold per second',         min: 0,   max: 120,   step: 1,   def: 6 },
+  incomeGrow: { g: 'Income',  label: 'Income growth %/min',     min: 0,   max: 400,   step: 5,   def: 12 },
+  goldKill:   { g: 'Income',  label: 'Gold per kill',           min: 0,   max: 1500,  step: 25,  def: 40 },
+  goldFinish: { g: 'Income',  label: 'Gold per runner finish',  min: 0,   max: 1500,  step: 25,  def: 25 },
+  ptsFinish:  { g: 'Runners', label: 'Upgrade points / finish', min: 1,   max: 60,    step: 1,   def: 5 },
+  ptsDeath:   { g: 'Runners', label: 'Upgrade points / death',  min: 0,   max: 30,    step: 1,   def: 2 },
+  lapBonus:   { g: 'Runners', label: 'Lap bonus % per finish',  min: 0,   max: 60,    step: 1,   def: 6 },
+  upGrow:     { g: 'Scaling', label: 'Runner upgrade cost %',   min: 10,  max: 400,   step: 5,   def: 100 },
+  twGrow:     { g: 'Scaling', label: 'Tower upgrade cost %',    min: 10,  max: 400,   step: 5,   def: 100 },
+  towerCost:  { g: 'Scaling', label: 'Tower build cost %',      min: 10,  max: 400,   step: 5,   def: 100 },
 };
+
 
 /* ----------------------------------------------------------------- buildings */
 /* kind decides how the tick treats it. tracks are the upgrade lines it sells. */
 const TOWERS = {
-  turret: { name: 'Turret', cost: 50,  kind: 'shoot',   range: 130, dmg: 12, rate: 2.2, proj: 215,
+  turret: { name: 'Turret', cost: 50,  kind: 'shoot',   range: 135, dmg: 10, rate: 2.0, proj: 215,
     color: '#7dd3fc', tracks: ['dmg', 'rng', 'spd', 'vel'], desc: 'Reliable single-target shooter.',
     forms: ['Turret', 'Twin Turret', 'Autocannon', 'Gatling', 'Vulcan', 'Warmachine', 'Annihilator'] },
-  sniper: { name: 'Sniper', cost: 120, kind: 'hitscan', range: 290, dmg: 55, rate: 0.55,
+  sniper: { name: 'Sniper', cost: 150, kind: 'hitscan', range: 250, dmg: 34, rate: 0.4,
     color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow.',
     forms: ['Sniper', 'Marksman', 'Longshot', 'Railgun', 'Deadeye', 'Executioner', 'Godshot'] },
-  mortar: { name: 'Mortar', cost: 150, kind: 'lob',     range: 240, minRange: 70, dmg: 45, splash: 65, rate: 0.6, proj: 240,
+  mortar: { name: 'Mortar', cost: 170, kind: 'lob',     range: 240, minRange: 70, dmg: 36, splash: 62, rate: 0.5, proj: 240,
     color: '#fdba74', tracks: ['dmg', 'rng', 'spd', 'pow', 'vel'], desc: 'Lobs shells. Splash damage. Blind up close.',
     forms: ['Mortar', 'Howitzer', 'Siege Mortar', 'Bombard', 'Artillery', 'Devastator', 'Apocalypse'] },
-  tesla:  { name: 'Tesla',  cost: 130, kind: 'chain',   range: 120, dmg: 22, rate: 1.1, chain: 3, chainRange: 95,
+  tesla:  { name: 'Tesla',  cost: 140, kind: 'chain',   range: 120, dmg: 15, rate: 1.0, chain: 3, chainRange: 95,
     color: '#c4b5fd', tracks: ['dmg', 'rng', 'spd'], desc: 'Zaps a runner, chains to nearby ones.',
     forms: ['Tesla Coil', 'Arc Coil', 'Storm Coil', 'Thunderhead', 'Tempest', 'Maelstrom', 'Zeus'] },
-  pulse:  { name: 'Pulse',  cost: 170, kind: 'pulse',   range: 110, dmg: 38, rate: 0.7,
+  pulse:  { name: 'Pulse',  cost: 180, kind: 'pulse',   range: 110, dmg: 24, rate: 0.6,
     color: '#22d3ee', tracks: ['dmg', 'rng', 'spd'], desc: 'Slams everything around it. Never misses.',
     forms: ['Pulse Node', 'Shockwave', 'Resonator', 'Quake Node', 'Cataclysm', 'Seismic Core', 'Singularity'] },
-  laser:  { name: 'Laser',  cost: 200, kind: 'beam',    range: 180, dps: 20, rampMax: 3.2, rampTime: 2.5,
+  laser:  { name: 'Laser',  cost: 210, kind: 'beam',    range: 175, dps: 12, rampMax: 2.2, rampTime: 3,
     color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds.',
     forms: ['Laser', 'Beam Emitter', 'Focused Beam', 'Prism Lance', 'Solar Lance', 'Starfire', 'Nova Lance'] },
-  flame:  { name: 'Flamer', cost: 90,  kind: 'aura',    range: 78,  dps: 28,
+  flame:  { name: 'Flamer', cost: 100, kind: 'aura',    range: 74,  dps: 17,
     color: '#fb7185', tracks: ['dmg', 'rng'], desc: 'Short range. Burns everything nearby, constantly.',
     forms: ['Flamer', 'Burner', 'Incinerator', 'Pyre', 'Inferno', 'Hellmouth', 'Sunforge'] },
-  frost:  { name: 'Frost',  cost: 80,  kind: 'slow',    range: 105, slow: 0.5,
+  frost:  { name: 'Frost',  cost: 90,  kind: 'slow',    range: 100, slow: 0.45,
     color: '#a5f3fc', tracks: ['pow', 'rng'], desc: 'Slows every runner in range.',
     forms: ['Frost Emitter', 'Chiller', 'Cryo Node', 'Deep Freeze', 'Glacier', 'Absolute Zero', 'Winter'] },
 };
 const TRAPS = {
-  spikes: { name: 'Spikes', cost: 40,  kind: 'spikes', dmg: 22, cd: 0.9,
+  spikes: { name: 'Spikes', cost: 40,  kind: 'spikes', dmg: 16, cd: 1,
     color: '#d1d5db', tracks: ['dmg', 'spd'], desc: 'Bites whoever steps on it.',
     forms: ['Spikes', 'Barbs', 'Caltrops', 'Spike Pit', 'Impaler Bed', 'Spine Field', 'Thornmaw'] },
-  glue:   { name: 'Glue',   cost: 30,  kind: 'glue',   slow: 0.65,
+  glue:   { name: 'Glue',   cost: 30,  kind: 'glue',   slow: 0.55,
     color: '#bef264', tracks: ['pow'], desc: 'Very sticky. Slows anyone standing in it.',
     forms: ['Glue', 'Tar', 'Sludge', 'Quagmire', 'Tar Pit', 'Mire', 'Molasses Sea'] },
-  saw:    { name: 'Saw',    cost: 110, kind: 'saw',    dps: 45,
+  saw:    { name: 'Saw',    cost: 110, kind: 'saw',    dps: 28,
     color: '#94a3b8', tracks: ['dmg'], desc: 'Spinning blade. Shreds anyone standing on it.',
     forms: ['Saw', 'Buzzsaw', 'Ripper', 'Shredder', 'Mulcher', 'Bonesaw', 'Meatgrinder'] },
-  mine:   { name: 'Mine',   cost: 70,  kind: 'mine',   dmg: 95, splash: 70, once: 1,
+  mine:   { name: 'Mine',   cost: 80,  kind: 'mine',   dmg: 65, splash: 66, once: 1,
     color: '#f97316', tracks: ['dmg', 'pow'], desc: 'One big blast, then it is gone for good.',
     forms: ['Mine', 'Charge', 'Bomb', 'Cluster Mine', 'Demolition Charge', 'Bunker Buster', 'Doomsday Mine'] },
-  snare:  { name: 'Snare',  cost: 90,  kind: 'snare',  root: 1.2, cd: 6,
+  snare:  { name: 'Snare',  cost: 90,  kind: 'snare',  root: 1, cd: 8,
     color: '#fcd34d', tracks: ['pow', 'spd'], desc: 'Roots a runner in place. Cannot move at all.',
     forms: ['Snare', 'Trap Jaws', 'Bear Trap', 'Bramble Snare', 'Iron Maiden', 'Root Cage', 'Stasis Field'] },
-  portal: { name: 'Portal', cost: 140, kind: 'portal', cd: 10,
+  portal: { name: 'Portal', cost: 140, kind: 'portal', cd: 14,
     color: '#c084fc', tracks: ['spd'], desc: 'Sends the runner all the way back to the start.',
     forms: ['Portal', 'Rift', 'Warp Gate', 'Void Gate', 'Wormhole', 'Event Horizon', 'Oblivion'] },
 };
@@ -146,8 +149,8 @@ const MM_ABILITIES = {
 /* Runner upgrades. Nothing is capped: costs grow instead. */
 const UPGRADES = {
   speed:    { name: 'Speed',       kind: 'passive', desc: '+9% move speed' },
-  hp:       { name: 'Vitality',    kind: 'passive', desc: '+25 max HP' },
-  regen:    { name: 'Regen',       kind: 'passive', desc: '+2 HP/s, even while being shot' },
+  hp:       { name: 'Vitality',    kind: 'passive', desc: '+30 max HP' },
+  regen:    { name: 'Regen',       kind: 'passive', desc: '+3 HP/s, even while being shot' },
   armor:    { name: 'Armor',       kind: 'passive', desc: 'Less damage taken (diminishing)' },
   grip:     { name: 'Grip',        kind: 'passive', desc: 'Resist slows and glue' },
   haste:    { name: 'Haste',       kind: 'passive', desc: 'Shorter ability cooldowns' },
@@ -174,7 +177,7 @@ const DEFS = { CELL, T, RUNNER_R, TOWERS, TRAPS, BUILD, TRACKS, MM_ABILITIES, UP
 const upgradeCost = (room, key, lv) => RULES.upgradeCost(room.set, UPGRADES[key], lv);
 const buildCost   = (room, type)    => RULES.buildCost(room.set, BUILD[type]);
 const trackCost   = (room, tw)      => RULES.trackCost(room.set, BUILD[tw.type], RULES.upgrades(tw.up));
-const twDmg   = tw => RULES.dmg(BUILD[tw.type], tw.up);
+const twDmg   = (room, tw) => RULES.dmg(BUILD[tw.type], tw.up, room.set);
 const twRange = tw => RULES.range(BUILD[tw.type], tw.up);
 const twRate  = tw => RULES.rate(BUILD[tw.type], tw.up);
 const twSlow  = tw => RULES.slow(BUILD[tw.type], tw.up);
@@ -578,7 +581,7 @@ function tick(room, now) {
 
     /* Regeneration does not care whether you are being shot at: it races the
        incoming damage instead of waiting politely for it to stop. */
-    if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + (2 + 2 * p.up.regen) * dt);
+    if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + RULES.regenPerSec(p.up) * dt);
     if (p.shieldUntil && now > p.shieldUntil && p.shield > 0) { p.shield = 0; }
 
     if (tileAt(room, Math.floor(p.x / CELL), Math.floor(p.y / CELL)) === T.END) finish(room, p, now);
@@ -598,7 +601,7 @@ function tick(room, now) {
       if (def.kind === 'aura') {
         let any = false;
         for (const t of tgts) {
-          if (Math.hypot(t.x - tw.x, t.y - tw.y) <= range) { hurtTarget(room, t, twDmg(tw) * dt * odMul, now, 'flame'); any = true; }
+          if (Math.hypot(t.x - tw.x, t.y - tw.y) <= range) { hurtTarget(room, t, twDmg(room, tw) * dt * odMul, now, 'flame'); any = true; }
         }
         tw.firing = any;
         continue;
@@ -613,7 +616,7 @@ function tick(room, now) {
         if (!best) { tw.firing = false; tw.beam = 0; tw.bx = 0; tw.by = 0; continue; }
         tw.beam = Math.min(def.rampTime, (tw.beam || 0) + dt);
         const ramp = 1 + (def.rampMax - 1) * (tw.beam / def.rampTime);
-        hurtTarget(room, best, twDmg(tw) * ramp * dt * odMul, now, 'laser');
+        hurtTarget(room, best, twDmg(room, tw) * ramp * dt * odMul, now, 'laser');
         tw.firing = true; tw.bx = Math.round(best.x); tw.by = Math.round(best.y);
         tw.aim = Math.atan2(best.y - tw.y, best.x - tw.x);
         continue;
@@ -627,7 +630,7 @@ function tick(room, now) {
         if (!inRange.length) continue;
         tw.nextShot = now + 1000 / rate;
         ev(room, { k: 'pulse', x: Math.round(tw.x), y: Math.round(tw.y), r: Math.round(range), c: def.color });
-        for (const t of inRange) hurtTarget(room, t, twDmg(tw), now, 'pulse');
+        for (const t of inRange) hurtTarget(room, t, twDmg(room, tw), now, 'pulse');
         continue;
       }
 
@@ -640,7 +643,7 @@ function tick(room, now) {
       if (!best) continue;
       tw.nextShot = now + 1000 / rate;
       tw.aim = Math.atan2(best.y - tw.y, best.x - tw.x);
-      const dmg = twDmg(tw);
+      const dmg = twDmg(room, tw);
 
       if (def.kind === 'shoot') {
         const speed = twProj(tw);
@@ -746,17 +749,17 @@ function stepOnTrap(room, tw, p, now, dt) {
       p.slow = Math.min(p.slow, 1 - twSlow(tw));
       break;
     case 'saw':
-      damage(room, p, twDmg(tw) * dt, now, 'saw');
+      damage(room, p, twDmg(room, tw) * dt, now, 'saw');
       tw.firing = true;
       break;
     case 'spikes':
       if (now - (p.trapAt[tw.id] || 0) > twCd(tw) * 1000) {
         p.trapAt[tw.id] = now;
-        damage(room, p, twDmg(tw), now, 'spikes');
+        damage(room, p, twDmg(room, tw), now, 'spikes');
       }
       break;
     case 'mine':
-      explode(room, tw.x, tw.y, twSplash(tw), twDmg(tw), now, '#f97316');
+      explode(room, tw.x, tw.y, twSplash(tw), twDmg(room, tw), now, '#f97316');
       room.towers.delete(tw.gx + ',' + tw.gy);
       room.towersDirty = true;
       break;
@@ -1035,7 +1038,7 @@ function onMessage(ws, raw) {
       if (p.points < cost) { note(p, 'Need ' + cost + ' points for ' + def.name + '.', 'warn'); break; }
       p.points -= cost; p.up[m.key] = lv + 1;
       p.maxHp = rMaxHp(room, p);
-      if (m.key === 'hp' && !p.dead) p.hp += 25;
+      if (m.key === 'hp' && !p.dead) p.hp += 30 * (room.set.runnerHp / 100);
       ev(room, { k: 'levelup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       note(p, def.name + ' is now level ' + p.up[m.key] + '.', 'good');
       break;

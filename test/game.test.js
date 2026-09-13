@@ -293,6 +293,26 @@ async function main() {
   await park(mm, run);
   await runRight(run, () => !twAt(mm, SX + 3, ROW), 'the mine goes off once and is gone for good', 6000);
 
+  /* ---- balance: the reliable weapons hit softer than the dodgeable ones --- */
+  const dps = t => (t.rate ? t.dmg * t.rate : t.dps) || 0;
+  const turretDps = dps(D.TOWERS.turret);
+  for (const t of ['sniper', 'tesla', 'pulse', 'laser', 'flame']) {
+    assert.ok(dps(D.TOWERS[t]) < turretDps,
+      t + ' cannot be dodged, so it must do less damage per second than the turret (' +
+      dps(D.TOWERS[t]).toFixed(1) + ' vs ' + turretDps.toFixed(1) + ')');
+  }
+  assert.ok(D.TOWERS.sniper.dmg < RULES.maxHp(mm.set, { hp: 0 }, 0) / 3,
+    'no single sniper shot takes a third of a fresh runner');
+  assert.ok(RULES.slow({ slow: 0.9 }, { pow: 99 }) <= RULES.MAX_SLOW,
+    'a slow can never reach a full stop, however upgraded');
+  assert.ok(RULES.root({ root: 1 }, { pow: 30 }) < 6, 'roots grow linearly, not exponentially');
+  /* the two global dials actually move the numbers */
+  assert.ok(RULES.dmg(D.TOWERS.turret, {}, { towerPower: 50 }) * 2 ===
+            RULES.dmg(D.TOWERS.turret, {}, { towerPower: 100 }), 'the tower damage dial scales damage');
+  assert.ok(RULES.maxHp({ lapBonus: 6, runnerHp: 200 }, { hp: 0 }, 0) >
+            RULES.maxHp({ lapBonus: 6, runnerHp: 100 }, { hp: 0 }, 0), 'the runner health dial scales health');
+  for (const k of ['towerPower', 'runnerHp']) assert.ok(D.SETTINGS[k], k + ' is a slider the Mastermind can move');
+
   /* ---- projectiles fly, and can be dodged -------------------------------- */
   assert.ok(D.TOWERS.turret.tracks.includes('vel'), 'the turret sells a projectile speed track');
   assert.ok(D.TOWERS.mortar.tracks.includes('vel'), 'so does the mortar');
@@ -445,9 +465,13 @@ async function main() {
   await setOpt(mm, 'respawn', 1);
   await waitFor(() => me(run).d === 0, 'the runner is on their feet before the kill test', 12000);
   const vpMM0 = run.state.vpMM, deaths0 = me(run).dth;
+  /* A well-fed runner shrugs off one tower now, which is the point of the
+     rebalance -- so lean on the global damage dial to make the kill happen. */
+  await setOpt(mm, 'towerPower', 300);
   mm.send({ t: 'tower', type: 'sniper', x: SX + 4, y: ROW - 1 });
   await waitFor(() => twAt(mm, SX + 4, ROW - 1), 'sniper built');
   await waitFor(() => me(run).dth === deaths0 + 1, 'the towers kill the runner', 25000);
+  await setOpt(mm, 'towerPower', 100);
   assert.strictEqual(run.state.vpMM, vpMM0 + mm.set.vpKill, 'a kill scores VP for the Mastermind');
   await waitFor(() => me(run).d === 0, 'and the runner respawns', 5000);
 

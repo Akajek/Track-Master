@@ -402,7 +402,7 @@ function updateTowerPanel() {
     '<div class="hint">' + esc(def.name) + ' · form ' + (form + 1) + ' of ' + (RULES.MAX_FORM + 1) + ' · ' +
     (nextName ? left + ' more upgrade' + (left === 1 ? '' : 's') + ' &rarr; <b>' + esc(nextName) + '</b>'
               : '<b class="gold">final form</b>') + '</div>' +
-    '<div class="hint">' + RULES.statLine(def, tw.up) + '</div>';
+    '<div class="hint">' + RULES.statLine(def, tw.up, SET) + '</div>';
   const cost = RULES.trackCost(SET, def, RULES.upgrades(tw.up));
   for (const tr of def.tracks) {
     html += '<div class="trk"><button data-trk="' + tr + '"' + (S.gold < cost ? ' disabled' : '') + '>' +

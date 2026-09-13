@@ -49,10 +49,11 @@ track is in edit mode; everything else can change mid-round.
 | Group | What it controls |
 |---|---|
 | Map | Board width and height in tiles. |
+| Balance | **Tower damage %** and **Runner health %**, the two dials to reach for first if a round feels one-sided, plus base runner speed and respawn time. |
 | Victory | Points needed to win, and how many a finish or a kill is worth. |
 | Income | Mastermind starting gold, gold per second, how fast income grows per minute, and the bonus per kill and per runner finish. |
-| Runners | Upgrade points per finish and per death, base move speed, respawn time. |
-| Scaling | Lap bonus per finish, plus how fast runner upgrades, tower upgrades and tower build costs climb. |
+| Runners | Upgrade points per finish and per death, and the lap bonus each finish banks. |
+| Scaling | How fast runner upgrades, tower upgrades and tower build costs climb. |
 
 A building's Nth upgrade costs 18% more than its N-1th, whichever track it goes
 on. Pricing by the building's total rather than per track keeps every building
@@ -63,6 +64,35 @@ final form is a whole-game goal rather than a purchase.
 
 The cost formulas live in `public/rules.js`, which the server requires and the
 browser loads, so a button never promises a price the server will not honour.
+
+## Balance
+
+The rule the numbers follow: **a weapon you cannot dodge hits softer than one
+you can.** The turret has the highest damage per second of any tower and is also
+the only one whose shots you can sidestep. Sniper, Tesla, Pulse, Laser and
+Flamer all land automatically, and all do less.
+
+There is a probe for checking this rather than guessing. It boots the server,
+builds a defence on a straight track, and runs a point-spending runner into it
+for a minute:
+
+```bash
+npm run balance
+```
+
+At the time of writing it reports, per sixty seconds:
+
+| Defence | Runner laps | Runner deaths |
+|---|---|---|
+| One sniper (146g) | 21 | 0 |
+| Six snipers (896g) | 4 | 7 |
+| Mixed turrets, snipers and traps (566g) | 8 | 4 |
+| The same mixed defence at 200% tower damage | 0 | 11 |
+| The same at 50% tower damage | 19 | 0 |
+
+So a lone tower is a nuisance, a real investment is a threat, and the Tower
+damage dial swings a round decisively in either direction if your group wants it
+harder or softer.
 
 ## The ability bar
 
@@ -150,4 +180,5 @@ send has a matching effect, and the test suite checks that.
   fire, and a win. It also checks the client files are served, that every sound
   the client asks for exists, and that every server event has a visual effect.
   Run with `npm test`.
+- `tools/balance-probe.js` — the balance readout above. `npm run balance`.
 - `render.yaml` — Render blueprint.

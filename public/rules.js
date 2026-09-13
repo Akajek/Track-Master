@@ -46,11 +46,23 @@ const RULES = {
   /* --------------------------------------------------------- tower stats */
   /* Each new form is worth a bonus of its own on top of the tracks, so growing
      a shape is always a real step up and not just a new coat of paint. */
-  dmg(def, up)   { return (def.dmg || def.dps || 0) * Math.pow(1.25, up.dmg || 0) * Math.pow(1.18, RULES.form(up)); },
+  /* `set` is optional: pass it and the Mastermind's global tower-damage dial
+     applies, which is the quickest way to tune a room that feels one-sided. */
+  dmg(def, up, set) {
+    const dial = set && set.towerPower ? set.towerPower / 100 : 1;
+    return (def.dmg || def.dps || 0) * Math.pow(1.25, up.dmg || 0) * Math.pow(1.18, RULES.form(up)) * dial;
+  },
   range(def, up) { return (def.range || 0) * Math.pow(1.12, up.rng || 0) * Math.pow(1.05, RULES.form(up)); },
   rate(def, up)  { return (def.rate || 0) * Math.pow(1.18, up.spd || 0) * Math.pow(1.07, RULES.form(up)); },
-  slow(def, up)  { return 1 - (1 - (def.slow || 0)) * Math.pow(0.88, up.pow || 0); },
-  root(def, up)  { return (def.root || 0) * Math.pow(1.15, up.pow || 0); },
+  /* Capped: a slow that reaches 100% is a runner standing still forever, which
+     is not a tower, it is a wall. */
+  MAX_SLOW: 0.9,
+  slow(def, up) {
+    return Math.min(RULES.MAX_SLOW, 1 - (1 - (def.slow || 0)) * Math.pow(0.88, up.pow || 0));
+  },
+  /* Linear, not exponential: roots compound badly with a cooldown that also
+     shortens, and an eight-second root is not a trap, it is a deletion. */
+  root(def, up)  { return (def.root || 0) * (1 + 0.12 * (up.pow || 0)); },
   splash(def, up) { return (def.splash || 0) * Math.pow(1.12, up.pow || 0); },
   /* Projectile speed. Only the buildings that actually launch something have a
      Velocity track; beams and hitscan shots arrive the instant they are fired. */
@@ -62,8 +74,12 @@ const RULES = {
 
   /* -------------------------------------------------------- runner stats */
   speed(set, up, laps) { return set.runSpeed * Math.pow(1.09, up.speed) * (1 + laps * set.lapBonus / 100); },
-  maxHp(set, up, laps) { return 100 + 25 * up.hp + laps * set.lapBonus; },
-  armorMul(up) { return 1 / (1 + 0.07 * up.armor); },
+  maxHp(set, up, laps) {
+    const dial = set && set.runnerHp ? set.runnerHp / 100 : 1;
+    return (130 + 30 * up.hp + laps * set.lapBonus) * dial;
+  },
+  regenPerSec(up) { return 3 + 3 * (up.regen || 0); },
+  armorMul(up) { return 1 / (1 + 0.09 * up.armor); },
   gripMul(up)  { return 1 / (1 + 0.15 * up.grip); },
   hasteMul(up) { return 1 / (1 + 0.08 * up.haste); },
   toughMul(up) { return 1 / (1 + 0.12 * up.tough); },
@@ -88,11 +104,11 @@ const RULES = {
 
   /* A one-line summary of what a building does at its current upgrades, used
      on the selected-tower panel and in the build menu. */
-  statLine(def, up) {
+  statLine(def, up, set) {
     up = up || {};
     const out = [];
-    if (def.dmg) out.push('dmg ' + Math.round(RULES.dmg(def, up)));
-    if (def.dps) out.push(Math.round(RULES.dmg(def, up)) + '/s');
+    if (def.dmg) out.push('dmg ' + Math.round(RULES.dmg(def, up, set)));
+    if (def.dps) out.push(Math.round(RULES.dmg(def, up, set)) + '/s');
     if (def.rate) out.push(RULES.rate(def, up).toFixed(1) + ' shots/s');
     if (def.range) out.push('range ' + Math.round(RULES.range(def, up)));
     if (def.minRange) out.push('blind under ' + def.minRange);
