@@ -49,6 +49,7 @@
   .pill { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:13px; }
   .grow { flex:1; }
   #main { flex:1; display:flex; min-height:0; }
+  #playfield { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
   #stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center;
            background:#05070f; min-width:0; overflow:hidden; }
   canvas { display:block; }
@@ -96,6 +97,37 @@
   #soundWrap { display:flex; align-items:center; gap:6px; }
   #soundWrap input[type=range] { width:70px; }
   #soundBtn { padding:3px 8px; font-size:14px; line-height:1; }
+
+  /* ---------------------------------------------------- the ability HUD */
+  #hud { display:flex; align-items:center; justify-content:center; gap:7px; flex-wrap:wrap;
+         padding:8px 10px; background:var(--panel); border-top:1px solid var(--line); flex:none;
+         /* on a narrow window the row wraps: cap it so it can never eat the board */
+         max-height:140px; overflow-y:auto; }
+  #hud .slot { position:relative; width:60px; height:58px; border-radius:10px; overflow:hidden;
+               background:#10162a; border:1px solid var(--line); cursor:pointer; flex:none;
+               display:flex; flex-direction:column; align-items:center; justify-content:center;
+               gap:1px; transition:border-color .15s, box-shadow .15s; }
+  #hud .slot .ico { font-size:19px; line-height:1; }
+  #hud .slot .nm { font-size:9.5px; letter-spacing:.2px; color:var(--muted); max-width:56px;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #hud .slot .key { position:absolute; top:2px; left:4px; font-size:9px; font-weight:700;
+                    color:var(--muted); }
+  #hud .slot .cost { position:absolute; top:2px; right:4px; font-size:9px; font-weight:700;
+                     color:var(--gold); }
+  /* the dark wedge that sweeps away as the cooldown runs down */
+  #hud .slot .sweep { position:absolute; inset:0; pointer-events:none;
+                      background:conic-gradient(rgba(4,7,16,.82) var(--deg,0deg), transparent 0); }
+  #hud .slot .secs { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+                     font-size:15px; font-weight:800; color:#fff; text-shadow:0 1px 3px #000;
+                     pointer-events:none; }
+  #hud .slot.ready { border-color:var(--accent); box-shadow:0 0 10px rgba(125,211,252,.35); }
+  #hud .slot.ready .nm { color:var(--text); }
+  #hud .slot.locked { opacity:.5; }
+  #hud .slot.locked .ico { filter:grayscale(1); }
+  #hud .slot.broke { opacity:.5; cursor:default; }
+  #hud .slot.armed { border-color:var(--gold); box-shadow:0 0 12px rgba(251,191,36,.5); }
+  #hud .slot:hover:not(.broke) { border-color:var(--accent); }
+  #hud .hudnote { font-size:12px; color:var(--muted); margin-left:4px; }
 </style>
 </head>
 <body>
@@ -142,9 +174,12 @@
     <button id="switchRole" style="font-size:12px"></button>
   </div>
   <div id="main">
-    <div id="stage">
-      <div id="toasts"></div>
-      <canvas id="cv" width="960" height="640"></canvas>
+    <div id="playfield">
+      <div id="stage">
+        <div id="toasts"></div>
+        <canvas id="cv" width="960" height="640"></canvas>
+      </div>
+      <div id="hud"></div>
     </div>
     <div id="side"></div>
   </div>

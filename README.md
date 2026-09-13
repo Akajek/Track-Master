@@ -64,6 +64,17 @@ final form is a whole-game goal rather than a purchase.
 The cost formulas live in `public/rules.js`, which the server requires and the
 browser loads, so a button never promises a price the server will not honour.
 
+## The ability bar
+
+Both roles get the same HUD under the board: one slot per ability, with its
+icon, its key, what it costs, and a dark wedge that sweeps away as the cooldown
+runs down. Click a slot or press its key.
+
+A Mastermind sees their five abilities and the gold each needs; a slot dims when
+they cannot afford it and lights up when it is ready. A runner sees all eight of
+theirs, greyed out until bought with the unlock price on the slot, so clicking a
+locked one buys it.
+
 ## How to play
 
 ### Mastermind
@@ -75,6 +86,7 @@ END and a connected path between them.
 |---|---|
 | Track tools | Path brush, eraser, set START, set END, and Snake / Zigzag / Spiral presets that fit whatever map size you picked. |
 | Towers (empty ground) | Turret, Sniper, Mortar (splash, blind up close), Tesla (chains), Pulse (hits everything around it, never misses), Laser (beam that burns hotter the longer it holds), Flamer, Frost (slow aura). |
+| Aim | Turret bolts and mortar shells are real objects: they take time to arrive and they lead their target. Hold one direction and a shot will meet you; change direction and it sails past. Both sell a **Velocity** track to make them harder to dodge. Beams and hitscan shots (Laser, Sniper, Tesla, Pulse) land the instant they fire, so they have no Velocity track and cannot be dodged. |
 | Traps (on the path) | Spikes, Glue, Saw (shreds anyone standing on it), Mine (one big blast, then gone), Snare (roots you in place), Portal (sends you all the way back to START). |
 | Upgrades | Click a building to open its panel. Each has its own tracks: Damage, Range, Rate or Power. Every track is uncapped. |
 | Forms | Buildings do not have a level. They have a **form**, and they grow into a new one every five upgrades: at 5, 10, 15, 20, 25 and 30. Each form looks different, has its own name, and carries a stat bonus of its own. Past 30 the shape stops changing and upgrades only feed the stats. |
@@ -89,7 +101,7 @@ and the Mastermind a victory point.
 
 | | |
 |---|---|
-| `WASD` / arrows | Move. You can only walk on the path. |
+| `WASD` / arrows | Move. You can only walk on the path, and changing direction dodges incoming bolts. |
 | `Space` | Dash |
 | `E` | EMP: disables nearby towers |
 | `Q` | Ghost: brief invulnerability |

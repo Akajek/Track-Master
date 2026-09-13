@@ -52,6 +52,9 @@ const RULES = {
   slow(def, up)  { return 1 - (1 - (def.slow || 0)) * Math.pow(0.88, up.pow || 0); },
   root(def, up)  { return (def.root || 0) * Math.pow(1.15, up.pow || 0); },
   splash(def, up) { return (def.splash || 0) * Math.pow(1.12, up.pow || 0); },
+  /* Projectile speed. Only the buildings that actually launch something have a
+     Velocity track; beams and hitscan shots arrive the instant they are fired. */
+  proj(def, up) { return (def.proj || 0) * Math.pow(1.2, up.vel || 0); },
   /* Traps that re-arm: the Rate track and each form shorten the wait. */
   cooldown(def, up) {
     return (def.cd || 0) / (Math.pow(1.18, up.spd || 0) * Math.pow(1.07, RULES.form(up)));

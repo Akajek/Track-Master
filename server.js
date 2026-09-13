@@ -79,49 +79,49 @@ const SETTINGS = {
 /* ----------------------------------------------------------------- buildings */
 /* kind decides how the tick treats it. tracks are the upgrade lines it sells. */
 const TOWERS = {
-  turret: { name: 'Turret', cost: 50,  kind: 'shoot',   range: 130, dmg: 12, rate: 2.2, proj: 420,
-    color: '#7dd3fc', tracks: ['dmg', 'rng', 'spd'], desc: 'Reliable single-target shooter.' ,
+  turret: { name: 'Turret', cost: 50,  kind: 'shoot',   range: 130, dmg: 12, rate: 2.2, proj: 215,
+    color: '#7dd3fc', tracks: ['dmg', 'rng', 'spd', 'vel'], desc: 'Reliable single-target shooter.',
     forms: ['Turret', 'Twin Turret', 'Autocannon', 'Gatling', 'Vulcan', 'Warmachine', 'Annihilator'] },
   sniper: { name: 'Sniper', cost: 120, kind: 'hitscan', range: 290, dmg: 55, rate: 0.55,
-    color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow.' ,
+    color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow.',
     forms: ['Sniper', 'Marksman', 'Longshot', 'Railgun', 'Deadeye', 'Executioner', 'Godshot'] },
   mortar: { name: 'Mortar', cost: 150, kind: 'lob',     range: 240, minRange: 70, dmg: 45, splash: 65, rate: 0.6, proj: 240,
-    color: '#fdba74', tracks: ['dmg', 'rng', 'spd', 'pow'], desc: 'Lobs shells. Splash damage. Blind up close.' ,
+    color: '#fdba74', tracks: ['dmg', 'rng', 'spd', 'pow', 'vel'], desc: 'Lobs shells. Splash damage. Blind up close.',
     forms: ['Mortar', 'Howitzer', 'Siege Mortar', 'Bombard', 'Artillery', 'Devastator', 'Apocalypse'] },
   tesla:  { name: 'Tesla',  cost: 130, kind: 'chain',   range: 120, dmg: 22, rate: 1.1, chain: 3, chainRange: 95,
-    color: '#c4b5fd', tracks: ['dmg', 'rng', 'spd'], desc: 'Zaps a runner, chains to nearby ones.' ,
+    color: '#c4b5fd', tracks: ['dmg', 'rng', 'spd'], desc: 'Zaps a runner, chains to nearby ones.',
     forms: ['Tesla Coil', 'Arc Coil', 'Storm Coil', 'Thunderhead', 'Tempest', 'Maelstrom', 'Zeus'] },
   pulse:  { name: 'Pulse',  cost: 170, kind: 'pulse',   range: 110, dmg: 38, rate: 0.7,
-    color: '#22d3ee', tracks: ['dmg', 'rng', 'spd'], desc: 'Slams everything around it. Never misses.' ,
+    color: '#22d3ee', tracks: ['dmg', 'rng', 'spd'], desc: 'Slams everything around it. Never misses.',
     forms: ['Pulse Node', 'Shockwave', 'Resonator', 'Quake Node', 'Cataclysm', 'Seismic Core', 'Singularity'] },
   laser:  { name: 'Laser',  cost: 200, kind: 'beam',    range: 180, dps: 20, rampMax: 3.2, rampTime: 2.5,
-    color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds.' ,
+    color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds.',
     forms: ['Laser', 'Beam Emitter', 'Focused Beam', 'Prism Lance', 'Solar Lance', 'Starfire', 'Nova Lance'] },
   flame:  { name: 'Flamer', cost: 90,  kind: 'aura',    range: 78,  dps: 28,
-    color: '#fb7185', tracks: ['dmg', 'rng'], desc: 'Short range. Burns everything nearby, constantly.' ,
+    color: '#fb7185', tracks: ['dmg', 'rng'], desc: 'Short range. Burns everything nearby, constantly.',
     forms: ['Flamer', 'Burner', 'Incinerator', 'Pyre', 'Inferno', 'Hellmouth', 'Sunforge'] },
   frost:  { name: 'Frost',  cost: 80,  kind: 'slow',    range: 105, slow: 0.5,
-    color: '#a5f3fc', tracks: ['pow', 'rng'], desc: 'Slows every runner in range.' ,
+    color: '#a5f3fc', tracks: ['pow', 'rng'], desc: 'Slows every runner in range.',
     forms: ['Frost Emitter', 'Chiller', 'Cryo Node', 'Deep Freeze', 'Glacier', 'Absolute Zero', 'Winter'] },
 };
 const TRAPS = {
   spikes: { name: 'Spikes', cost: 40,  kind: 'spikes', dmg: 22, cd: 0.9,
-    color: '#d1d5db', tracks: ['dmg', 'spd'], desc: 'Bites whoever steps on it.' ,
+    color: '#d1d5db', tracks: ['dmg', 'spd'], desc: 'Bites whoever steps on it.',
     forms: ['Spikes', 'Barbs', 'Caltrops', 'Spike Pit', 'Impaler Bed', 'Spine Field', 'Thornmaw'] },
   glue:   { name: 'Glue',   cost: 30,  kind: 'glue',   slow: 0.65,
-    color: '#bef264', tracks: ['pow'], desc: 'Very sticky. Slows anyone standing in it.' ,
+    color: '#bef264', tracks: ['pow'], desc: 'Very sticky. Slows anyone standing in it.',
     forms: ['Glue', 'Tar', 'Sludge', 'Quagmire', 'Tar Pit', 'Mire', 'Molasses Sea'] },
   saw:    { name: 'Saw',    cost: 110, kind: 'saw',    dps: 45,
-    color: '#94a3b8', tracks: ['dmg'], desc: 'Spinning blade. Shreds anyone standing on it.' ,
+    color: '#94a3b8', tracks: ['dmg'], desc: 'Spinning blade. Shreds anyone standing on it.',
     forms: ['Saw', 'Buzzsaw', 'Ripper', 'Shredder', 'Mulcher', 'Bonesaw', 'Meatgrinder'] },
   mine:   { name: 'Mine',   cost: 70,  kind: 'mine',   dmg: 95, splash: 70, once: 1,
-    color: '#f97316', tracks: ['dmg', 'pow'], desc: 'One big blast, then it is gone for good.' ,
+    color: '#f97316', tracks: ['dmg', 'pow'], desc: 'One big blast, then it is gone for good.',
     forms: ['Mine', 'Charge', 'Bomb', 'Cluster Mine', 'Demolition Charge', 'Bunker Buster', 'Doomsday Mine'] },
   snare:  { name: 'Snare',  cost: 90,  kind: 'snare',  root: 1.2, cd: 6,
-    color: '#fcd34d', tracks: ['pow', 'spd'], desc: 'Roots a runner in place. Cannot move at all.' ,
+    color: '#fcd34d', tracks: ['pow', 'spd'], desc: 'Roots a runner in place. Cannot move at all.',
     forms: ['Snare', 'Trap Jaws', 'Bear Trap', 'Bramble Snare', 'Iron Maiden', 'Root Cage', 'Stasis Field'] },
   portal: { name: 'Portal', cost: 140, kind: 'portal', cd: 10,
-    color: '#c084fc', tracks: ['spd'], desc: 'Sends the runner all the way back to the start.' ,
+    color: '#c084fc', tracks: ['spd'], desc: 'Sends the runner all the way back to the start.',
     forms: ['Portal', 'Rift', 'Warp Gate', 'Void Gate', 'Wormhole', 'Event Horizon', 'Oblivion'] },
 };
 for (const k in TRAPS) TRAPS[k].onPath = true;
@@ -132,14 +132,15 @@ const TRACKS = {
   rng: { name: 'Range',  desc: '+12% range' },
   spd: { name: 'Rate',   desc: '+18% fire rate, or a faster re-arm for a trap' },
   pow: { name: 'Power',  desc: 'stronger effect' },
+  vel: { name: 'Velocity', desc: '+20% projectile speed' },
 };
 
 const MM_ABILITIES = {
-  meteor:  { name: 'Meteor',  cost: 100, cd: 8,  dmg: 70,  radius: 80, delay: 1.0, aim: 1, desc: 'Click the board. Big boom after 1s.' },
-  freeze:  { name: 'Freeze',  cost: 150, cd: 20, dur: 1.6, desc: 'Every runner stops dead for 1.6s.' },
-  barrage: { name: 'Barrage', cost: 260, cd: 30, dmg: 40, radius: 62, shells: 6, aim: 1, desc: 'Six shells rain around the spot you pick.' },
-  overdrive: { name: 'Overdrive', cost: 300, cd: 40, dur: 6, desc: 'Every tower fires at double rate for 6s.' },
-  blackout: { name: 'Blackout', cost: 180, cd: 35, dur: 5, desc: 'Runners lose every ability for 5s.' },
+  meteor:  { name: 'Meteor',  cost: 100, cd: 8,  dmg: 70,  radius: 80, delay: 1.0, aim: 1, icon: '☄', desc: 'Click the board. Big boom after 1s.' },
+  freeze:  { name: 'Freeze',  cost: 150, cd: 20, dur: 1.6, icon: '❄', desc: 'Every runner stops dead for 1.6s.' },
+  barrage: { name: 'Barrage', cost: 260, cd: 30, dmg: 40, radius: 62, shells: 6, aim: 1, icon: '💥', desc: 'Six shells rain around the spot you pick.' },
+  overdrive: { name: 'Overdrive', cost: 300, cd: 40, dur: 6, icon: '⏩', desc: 'Every tower fires at double rate for 6s.' },
+  blackout: { name: 'Blackout', cost: 180, cd: 35, dur: 5, icon: '🌑', desc: 'Runners lose every ability for 5s.' },
 };
 
 /* Runner upgrades. Nothing is capped: costs grow instead. */
@@ -154,14 +155,14 @@ const UPGRADES = {
   scholar:  { name: 'Scholar',     kind: 'passive', desc: '+1 upgrade point per finish' },
   revive:   { name: 'Quick Revive', kind: 'passive', desc: 'Respawn faster' },
   tough:    { name: 'Last Stand',  kind: 'passive', desc: 'Damage taken below 30% HP is reduced' },
-  dash:     { name: 'Dash',   kind: 'ability', key: 'Space', desc: 'Burst forward through fire' },
-  emp:      { name: 'EMP',    kind: 'ability', key: 'E', desc: 'Disable nearby towers' },
-  ghost:    { name: 'Ghost',  kind: 'ability', key: 'Q', desc: 'Brief invulnerability' },
-  blink:    { name: 'Blink',  kind: 'ability', key: 'F', desc: 'Teleport forward along the path' },
-  shield:   { name: 'Shield', kind: 'ability', key: 'R', desc: 'Absorb a chunk of damage' },
-  decoy:    { name: 'Decoy',  kind: 'ability', key: 'C', desc: 'Towers shoot your double instead' },
-  surge:    { name: 'Surge',  kind: 'ability', key: 'V', desc: 'Huge speed boost for a few seconds' },
-  medkit:   { name: 'Medkit', kind: 'ability', key: 'X', desc: 'Heal yourself instantly' },
+  dash:     { name: 'Dash',   kind: 'ability', key: 'Space', icon: '💨', desc: 'Burst forward through fire' },
+  emp:      { name: 'EMP',    kind: 'ability', key: 'E', icon: '⚡', desc: 'Disable nearby towers' },
+  ghost:    { name: 'Ghost',  kind: 'ability', key: 'Q', icon: '👻', desc: 'Brief invulnerability' },
+  blink:    { name: 'Blink',  kind: 'ability', key: 'F', icon: '✨', desc: 'Teleport forward along the path' },
+  shield:   { name: 'Shield', kind: 'ability', key: 'R', icon: '🛡', desc: 'Absorb a chunk of damage' },
+  decoy:    { name: 'Decoy',  kind: 'ability', key: 'C', icon: '👥', desc: 'Towers shoot your double instead' },
+  surge:    { name: 'Surge',  kind: 'ability', key: 'V', icon: '🚀', desc: 'Huge speed boost for a few seconds' },
+  medkit:   { name: 'Medkit', kind: 'ability', key: 'X', icon: '➕', desc: 'Heal yourself instantly' },
 };
 const ABILITY_KEYS = Object.keys(UPGRADES).filter(k => UPGRADES[k].kind === 'ability');
 
@@ -181,6 +182,7 @@ const twRoot  = tw => RULES.root(BUILD[tw.type], tw.up);
 const twSplash = tw => RULES.splash(BUILD[tw.type], tw.up);
 const twCd    = tw => RULES.cooldown(BUILD[tw.type], tw.up);
 const twForm  = tw => RULES.form(tw.up);
+const twProj  = tw => RULES.proj(BUILD[tw.type], tw.up);
 
 const rSpeed   = (room, p) => RULES.speed(room.set, p.up, p.laps);
 const rMaxHp   = (room, p) => RULES.maxHp(room.set, p.up, p.laps);
@@ -464,6 +466,30 @@ function targetsOf(room, now) {
   return list;
 }
 
+/* Where to shoot so a target moving in a straight line walks into the shot.
+   Falls back to firing straight at them when there is no solution. */
+function leadPoint(sx, sy, t, speed) {
+  const vx = t.p ? (t.p.vx || 0) : 0, vy = t.p ? (t.p.vy || 0) : 0;
+  const dx = t.x - sx, dy = t.y - sy;
+  const a = vx * vx + vy * vy - speed * speed;
+  const b = 2 * (dx * vx + dy * vy);
+  const c = dx * dx + dy * dy;
+  let time;
+  if (Math.abs(a) < 1e-6) {
+    if (Math.abs(b) < 1e-6) return { x: t.x, y: t.y };
+    time = -c / b;
+  } else {
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return { x: t.x, y: t.y };
+    const r = Math.sqrt(disc);
+    const opts = [(-b + r) / (2 * a), (-b - r) / (2 * a)].filter(v => v > 0);
+    if (!opts.length) return { x: t.x, y: t.y };
+    time = Math.min.apply(null, opts);
+  }
+  if (!(time > 0) || !isFinite(time) || time > 6) return { x: t.x, y: t.y };
+  return { x: t.x + vx * time, y: t.y + vy * time };
+}
+
 function hurtTarget(room, tgt, amt, now, src) {
   if (tgt.p) damage(room, tgt.p, amt, now, src);
   else if (tgt.decoy) {
@@ -534,6 +560,7 @@ function tick(room, now) {
 
     /* movement */
     const frozen = room.freezeUntil > now || p.rootUntil > now;
+    const wasX = p.x, wasY = p.y;
     if (!frozen) {
       let ix = p.input.dx, iy = p.input.dy;
       const len = Math.hypot(ix, iy);
@@ -545,6 +572,9 @@ function tick(room, now) {
       if (p.dashUntil > now) { spd = 760; ix = p.faceX; iy = p.faceY; }
       if (ix || iy) tryMove(room, p, ix * spd * dt, iy * spd * dt);
     }
+    /* Measured, not requested: this is what towers aim ahead of. Hold one
+       direction and a shot will meet you; change it and the shot sails past. */
+    p.vx = (p.x - wasX) / dt; p.vy = (p.y - wasY) / dt;
 
     /* Regeneration does not care whether you are being shot at: it races the
        incoming damage instead of waiting politely for it to stop. */
@@ -613,17 +643,24 @@ function tick(room, now) {
       const dmg = twDmg(tw);
 
       if (def.kind === 'shoot') {
-        room.projectiles.push({ x: tw.x, y: tw.y, tp: best.p ? best.p.id : 0, td: best.decoy ? best.decoy.id : 0,
-          spd: def.proj, dmg, c: def.color, kind: 'homing' });
+        const speed = twProj(tw);
+        const aim = leadPoint(tw.x, tw.y, best, speed);
+        const d = Math.hypot(aim.x - tw.x, aim.y - tw.y) || 1;
+        room.projectiles.push({ x: tw.x, y: tw.y, vx: (aim.x - tw.x) / d * speed, vy: (aim.y - tw.y) / d * speed,
+          dmg, c: def.color, kind: 'bolt', left: range * 1.8 });
+        tw.aim = Math.atan2(aim.y - tw.y, aim.x - tw.x);
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'turret', a: Math.round(tw.aim * 100) / 100 });
       } else if (def.kind === 'hitscan') {
         hurtTarget(room, best, dmg, now, 'sniper');
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'sniper', a: Math.round(tw.aim * 100) / 100 });
         ev(room, { k: 'shot', x1: Math.round(tw.x), y1: Math.round(tw.y), x2: Math.round(best.x), y2: Math.round(best.y), c: def.color, w: 3 });
       } else if (def.kind === 'lob') {
-        const dist = Math.hypot(best.x - tw.x, best.y - tw.y);
-        room.projectiles.push({ x: tw.x, y: tw.y, tx: best.x, ty: best.y, sx: tw.x, sy: tw.y, t: 0,
-          dur: dist / def.proj, dmg, splash: twSplash(tw), c: def.color, kind: 'lob' });
+        const speed = twProj(tw);
+        const aim = leadPoint(tw.x, tw.y, best, speed);
+        const dist = Math.hypot(aim.x - tw.x, aim.y - tw.y);
+        room.projectiles.push({ x: tw.x, y: tw.y, tx: aim.x, ty: aim.y, sx: tw.x, sy: tw.y, t: 0,
+          dur: Math.max(0.15, dist / speed), dmg, splash: twSplash(tw), c: def.color, kind: 'lob' });
+        tw.aim = Math.atan2(aim.y - tw.y, aim.x - tw.x);
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'mortar', a: Math.round(tw.aim * 100) / 100 });
       } else if (def.kind === 'chain') {
         const hit = [best]; let last = best, d = dmg;
@@ -648,23 +685,41 @@ function tick(room, now) {
   }
 
   /* --------------------------------------------------------- projectiles */
+  /* Bolts fly in a straight line and hit only what they actually run into, so
+     stepping out of the way works. Substepped so a fast one cannot skip past a
+     runner between ticks. */
+  const flying = live ? targetsOf(room, now) : [];
   for (let i = room.projectiles.length - 1; i >= 0; i--) {
     const pr = room.projectiles[i];
-    if (pr.kind === 'homing') {
-      let tx = null, ty = null;
-      if (pr.tp) { const t = room.players.get(pr.tp); if (t && !t.dead && t.role === 'runner') { tx = t.x; ty = t.y; } }
-      else { const d = room.decoys.find(d => d.id === pr.td); if (d) { tx = d.x; ty = d.y; } }
-      if (tx === null || !live) { room.projectiles.splice(i, 1); continue; }
-      const dx = tx - pr.x, dy = ty - pr.y, d = Math.hypot(dx, dy), step = pr.spd * dt;
-      if (d <= step + 4) {
-        if (pr.tp) { const t = room.players.get(pr.tp); if (t) damage(room, t, pr.dmg, now, 'turret'); }
-        else { const dc = room.decoys.find(x => x.id === pr.td); if (dc) dc.hp -= pr.dmg; }
-        ev(room, { k: 'spark', x: Math.round(tx), y: Math.round(ty), c: pr.c });
-        room.projectiles.splice(i, 1); continue;
+    if (!live) { room.projectiles.splice(i, 1); continue; }
+
+    if (pr.kind === 'bolt') {
+      const dist = Math.hypot(pr.vx, pr.vy) * dt;
+      const sub = Math.max(1, Math.ceil(dist / 8));
+      let hit = false;
+      for (let k = 0; k < sub && !hit; k++) {
+        pr.x += pr.vx * dt / sub;
+        pr.y += pr.vy * dt / sub;
+        pr.left -= dist / sub;
+        for (const t of flying) {
+          if (t.p && (t.p.dead || t.p.ghostUntil > now)) continue;
+          if (t.decoy && t.decoy.hp <= 0) continue;
+          const tx = t.p ? t.p.x : t.decoy.x, ty = t.p ? t.p.y : t.decoy.y;
+          if (Math.hypot(tx - pr.x, ty - pr.y) <= RUNNER_R + 4) {
+            hurtTarget(room, t, pr.dmg, now, 'turret');
+            ev(room, { k: 'spark', x: Math.round(pr.x), y: Math.round(pr.y), c: pr.c });
+            hit = true;
+            break;
+          }
+        }
       }
-      pr.x += dx / d * step; pr.y += dy / d * step;
+      const gone = pr.left <= 0 || pr.x < -30 || pr.y < -30 ||
+                   pr.x > boardW(room) + 30 || pr.y > boardH(room) + 30;
+      if (hit || gone) {
+        if (!hit) ev(room, { k: 'fizzle', x: Math.round(pr.x), y: Math.round(pr.y), c: pr.c });
+        room.projectiles.splice(i, 1);
+      }
     } else if (pr.kind === 'lob') {
-      if (!live) { room.projectiles.splice(i, 1); continue; }
       pr.t += dt;
       const f = Math.min(1, pr.t / pr.dur);
       pr.x = pr.sx + (pr.tx - pr.sx) * f;
@@ -785,7 +840,10 @@ function stateMsg(room, now) {
     od: Math.max(0, room.overdriveUntil - now),
     bo: Math.max(0, room.blackoutUntil - now),
     r, twd,
-    pj: room.projectiles.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), c: p.c, h: Math.round(p.h || 0), k: p.kind })),
+    pj: room.projectiles.map(p => ({
+      x: Math.round(p.x), y: Math.round(p.y), c: p.c, h: Math.round(p.h || 0), k: p.kind,
+      a: p.kind === 'bolt' ? Math.round(Math.atan2(p.vy, p.vx) * 100) / 100 : 0,
+    })),
     mt: room.meteors.map(m => ({ x: m.x, y: m.y, r: m.r, in: Math.max(0, m.at - now) })),
     dc: room.decoys.map(d => ({ id: d.id, x: Math.round(d.x), y: Math.round(d.y), hp: Math.round(d.hp), mh: d.maxHp })),
     ev: room.events,

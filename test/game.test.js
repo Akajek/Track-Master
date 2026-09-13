@@ -133,6 +133,9 @@ async function main() {
                                         gameSrc.indexOf('function drawTower('));
   assert.ok(/terrain\.width\s*=\s*cv\.width/.test(drawTerrainBody),
     'drawTerrain must size the terrain cache to the canvas before drawing into it');
+  assert.ok(page.includes('id="hud"'), 'the page has an ability HUD');
+  assert.ok(gameSrc.includes('function buildHud'), 'and the client builds it');
+  assert.ok(gameSrc.includes('function updateHud'), 'and keeps it up to date');
   assert.strictEqual((await get('/healthz')).status, 200, 'health check for Render responds');
 
   /* ---- lobby, roles, defs ------------------------------------------------ */
@@ -157,6 +160,9 @@ async function main() {
     assert.ok(D.SETTINGS[s], 'setting ' + s + ' is defined');
   }
   assert.ok(!('max' in (D.UPGRADES.speed || {})), 'runner upgrades no longer carry a level cap');
+  /* the HUD draws itself from these, so every ability needs an icon */
+  for (const k of D.ABILITY_KEYS) assert.ok(D.UPGRADES[k].icon, 'runner ability ' + k + ' has a HUD icon');
+  for (const k in D.MM_ABILITIES) assert.ok(D.MM_ABILITIES[k].icon, 'mastermind ability ' + k + ' has a HUD icon');
 
   const run = await client('Speedy', 'runner', code);
   assert.strictEqual(run.welcome.role, 'runner');
@@ -287,6 +293,40 @@ async function main() {
   await park(mm, run);
   await runRight(run, () => !twAt(mm, SX + 3, ROW), 'the mine goes off once and is gone for good', 6000);
 
+  /* ---- projectiles fly, and can be dodged -------------------------------- */
+  assert.ok(D.TOWERS.turret.tracks.includes('vel'), 'the turret sells a projectile speed track');
+  assert.ok(D.TOWERS.mortar.tracks.includes('vel'), 'so does the mortar');
+  for (const t of ['laser', 'sniper', 'tesla', 'pulse', 'flame', 'frost']) {
+    assert.ok(!D.TOWERS[t].tracks.includes('vel'), t + ' launches nothing, so it has no velocity track');
+  }
+  assert.ok(RULES.proj(D.TOWERS.turret, { vel: 3 }) > RULES.proj(D.TOWERS.turret, {}),
+    'the velocity track speeds the bolt up');
+  assert.strictEqual(RULES.proj(D.TOWERS.laser, {}), 0, 'a beam has no projectile speed at all');
+
+  await setOpt(mm, 'respawn', 3);
+  await park(mm, run);
+  /* straight above the start, so running along the path is a clean sidestep */
+  mm.send({ t: 'tower', type: 'turret', x: SX, y: ROW - 2 });
+  await waitFor(() => twAt(mm, SX, ROW - 2), 'a turret overlooking the start');
+  await sleep(1700);                                   /* let spawn protection lapse */
+  const hpStill = me(run).hp;
+  await waitFor(() => run.state.pj.some(p => p.k === 'bolt'), 'a bolt is in the air', 9000);
+  assert.ok(run.state.pj.every(p => typeof p.a === 'number'), 'bolts carry a heading for the client to draw');
+  await waitFor(() => me(run).hp < hpStill, 'a runner who stands still is hit by it', 9000);
+
+  /* now dodge one: wait for a bolt, remove the shooter, and step aside */
+  await waitFor(() => run.state.pj.some(p => p.k === 'bolt'), 'another bolt in the air', 9000);
+  mm.send({ t: 'sell', x: SX, y: ROW - 2 });
+  run.send({ t: 'input', dx: 1, dy: 0 });
+  const hpAtDodge = me(run).hp;
+  await waitFor(() => run.state.pj.length === 0, 'the bolt finishes its flight', 6000);
+  run.send({ t: 'input', dx: 0, dy: 0 });
+  await sleep(60);
+  assert.ok(me(run).hp >= hpAtDodge,
+    'the dodged bolt did no damage (' + hpAtDodge + ' -> ' + me(run).hp + ')');
+  await waitFor(() => !twAt(mm, SX, ROW - 2), 'shooter cleared away');
+  await park(mm, run);
+
   /* ---- healing works through damage -------------------------------------- */
   /* Regeneration used to wait two seconds after the last hit. It must not: the
      test damages the runner, removes the source, and checks that health starts
@@ -317,7 +357,8 @@ async function main() {
   mm.send({ t: 'tower', type: 'turret', x: SX + 2, y: ROW - 1 });
   await waitFor(() => twAt(mm, SX + 2, ROW - 1), 'turret built on grass');
   const turret = twAt(mm, SX + 2, ROW - 1);
-  assert.deepStrictEqual(turret.up, { dmg: 0, rng: 0, spd: 0 }, 'a new turret has three upgrade tracks at zero');
+  assert.deepStrictEqual(turret.up, { dmg: 0, rng: 0, spd: 0, vel: 0 },
+    'a new turret starts with all four of its upgrade tracks at zero');
   assert.ok(mm.state.gold <= gold0 - RULES.buildCost(mm.set, D.TOWERS.turret) + 40, 'gold was charged');
 
   const upCost = RULES.trackCost(mm.set, D.TOWERS.turret, 0);

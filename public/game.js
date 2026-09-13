@@ -171,6 +171,7 @@ function buildSide() {
   $('rolePill').textContent = isMM() ? 'MASTERMIND' : 'RUNNER · ' + me.name;
   $('switchRole').textContent = isMM() ? 'Become a runner' : 'Take the Mastermind seat';
   if (isMM()) buildMM(); else buildRunner();
+  buildHud();
   const sb = document.createElement('div');
   sb.innerHTML = '<h3>Scoreboard</h3><table id="score"></table>';
   side.appendChild(sb);
@@ -301,16 +302,15 @@ function buildRunner() {
     '<div style="margin-top:8px">Upgrade points: <span class="gold" id="ptsTxt">0</span>' +
       '<span class="muted" id="lapTxt"></span></div>' +
     '<div class="hint" id="rewardHint"></div>' +
-    '<h3>Abilities</h3><div id="abChips" class="hint"></div>' +
     '<h3>Buy abilities</h3><div class="list" id="upAbil"></div>' +
     '<h3>Buy upgrades</h3><div class="list" id="upPass"></div>' +
     '<h3>Controls</h3><div class="hint"><span class="kbd">W</span><span class="kbd">A</span>' +
-    '<span class="kbd">S</span><span class="kbd">D</span> or arrows to move. Every ability has its own key ' +
-    'once you buy it. Levels never cap; the cost just climbs.</div>'
+    '<span class="kbd">S</span><span class="kbd">D</span> or arrows to move. Abilities live in the bar under ' +
+    'the board: click a slot or press its key. Levels never cap; the cost just climbs.</div>'
   ));
   el.hpTxt = $('hpTxt'); el.hpBar = $('hpBar'); el.ptsTxt = $('ptsTxt'); el.lapTxt = $('lapTxt');
   el.shWrap = $('shWrap'); el.shTxt = $('shTxt'); el.shBar = $('shBar');
-  el.abChips = $('abChips'); el.rewardHint = $('rewardHint');
+  el.rewardHint = $('rewardHint');
   el.upBtns = [];
   for (const k in D.UPGRADES) {
     const u = D.UPGRADES[k];
@@ -350,6 +350,7 @@ function updateSide() {
       (S.mm ? esc(S.mm.n) : '<span class="warn">nobody — seat open</span>') + '</td></tr>';
   }
   if (isMM()) updateMM(); else updateRunner();
+  updateHud();
 }
 
 function updateMM() {
@@ -434,15 +435,6 @@ function updateRunner() {
     SET.lapBonus + '% speed and +' + SET.lapBonus + ' max HP. Dying gives the Mastermind ' +
     SET.vpKill + ' VP and you ' + SET.ptsDeath + '.';
 
-  const chips = [];
-  for (const k of D.ABILITY_KEYS) {
-    const u = D.UPGRADES[k], lv = r.up[k], cd = r.cd[k];
-    if (!lv) continue;
-    const state = cd > 0 ? '<span class="warn">' + (cd / 1000).toFixed(1) + 's</span>' : '<span class="good">READY</span>';
-    chips.push('<span class="kbd">' + u.key + '</span> ' + u.name + ' ' + state);
-  }
-  el.abChips.innerHTML = chips.length ? chips.join('<br>') : 'None bought yet. Buy one below.';
-
   for (const b of el.upBtns || []) {
     const k = b.dataset.up, lv = r.up[k], u = D.UPGRADES[k];
     const cost = RULES.upgradeCost(SET, u, lv);
@@ -458,6 +450,107 @@ function setTool(kind, type) {
   if (toolKind) selTower = null;
   panelSig = '';
   updateSide();
+}
+
+/* ================================================================ the HUD */
+/* One row of slots under the board, the same for both roles: icon, key, cost,
+   and a dark wedge that sweeps away as the cooldown runs down. The Mastermind
+   sees their five abilities and what they cost; a runner sees all eight of
+   theirs, greyed out until bought, with the price to unlock on the slot. */
+const hud = $('hud');
+let hudSlots = [];
+
+function buildHud() {
+  hud.innerHTML = '';
+  hudSlots = [];
+  if (!me || !D) return;
+  const keys = isMM() ? Object.keys(D.MM_ABILITIES) : D.ABILITY_KEYS;
+  for (const k of keys) {
+    const def = isMM() ? D.MM_ABILITIES[k] : D.UPGRADES[k];
+    const slot = document.createElement('div');
+    slot.className = 'slot';
+    slot.dataset.ab = k;
+    slot.title = def.name + ' — ' + def.desc;
+    slot.innerHTML =
+      '<span class="key"></span><span class="cost"></span>' +
+      '<span class="ico">' + (def.icon || '') + '</span>' +
+      '<span class="nm">' + esc(def.name) + '</span>' +
+      '<span class="sweep"></span><span class="secs"></span>';
+    slot.onclick = () => hudClick(k);
+    hud.appendChild(slot);
+    hudSlots.push({
+      k, def, el: slot,
+      key: slot.querySelector('.key'), cost: slot.querySelector('.cost'),
+      sweep: slot.querySelector('.sweep'), secs: slot.querySelector('.secs'),
+    });
+  }
+  const note = document.createElement('span');
+  note.className = 'hudnote';
+  note.id = 'hudNote';
+  hud.appendChild(note);
+  fitCanvas();                       /* the row just took height off the stage */
+}
+
+function hudClick(k) {
+  if (isMM()) {
+    const ab = D.MM_ABILITIES[k];
+    if (ab.aim) setTool('aim', k);
+    else send({ t: 'ability', a: k });
+  } else {
+    const r = myRunner();
+    if (!r) return;
+    if (!r.up[k]) send({ t: 'upgrade', key: k });   /* the slot shows the price */
+    else send({ t: 'act', a: k });
+  }
+}
+
+function updateHud() {
+  if (!S || !SET || !hudSlots.length) return;
+  const r = myRunner();
+  for (const s of hudSlots) {
+    if (isMM()) {
+      const ab = D.MM_ABILITIES[s.k], cd = S.mmCd[s.k] || 0;
+      const broke = S.gold < ab.cost, blocked = S.edit || !!S.win;
+      s.key.textContent = '';
+      s.cost.textContent = ab.cost;
+      s.cost.style.color = broke ? 'var(--warn)' : 'var(--gold)';
+      s.sweep.style.setProperty('--deg', (cd > 0 ? 360 * cd / (ab.cd * 1000) : 0) + 'deg');
+      s.secs.textContent = cd > 0 ? Math.ceil(cd / 1000) : '';
+      s.el.classList.toggle('ready', cd <= 0 && !broke && !blocked);
+      s.el.classList.toggle('broke', broke || blocked);
+      s.el.classList.toggle('armed', toolKind === 'aim' && toolType === s.k);
+    } else if (r) {
+      const u = D.UPGRADES[s.k], lv = r.up[s.k], cd = r.cd[s.k] || 0;
+      const locked = !lv;
+      s.key.textContent = u.key === 'Space' ? 'SPC' : u.key;
+      if (locked) {
+        const cost = RULES.upgradeCost(SET, u, 0);
+        s.cost.textContent = cost + 'p';
+        s.cost.style.color = r.pt >= cost ? 'var(--good)' : 'var(--warn)';
+        s.secs.textContent = '';
+        s.sweep.style.setProperty('--deg', '0deg');
+      } else {
+        const full = RULES.ability[s.k](lv).cd * RULES.hasteMul(r.up);
+        s.cost.textContent = 'L' + lv;
+        s.cost.style.color = 'var(--muted)';
+        s.sweep.style.setProperty('--deg', (cd > 0 ? 360 * Math.min(1, cd / full) : 0) + 'deg');
+        s.secs.textContent = cd > 0 ? (cd >= 1000 ? Math.ceil(cd / 1000) : (cd / 1000).toFixed(1)) : '';
+      }
+      s.el.classList.toggle('locked', locked);
+      s.el.classList.toggle('ready', !locked && cd <= 0 && !S.edit && !S.win && !S.bo && !r.d);
+      s.el.classList.toggle('broke', false);
+    }
+  }
+  const note = $('hudNote');
+  if (!note) return;
+  if (isMM()) {
+    note.innerHTML = 'Gold <b class="gold">' + S.gold + '</b>' +
+      (S.edit ? ' <span class="warn">· editing</span>' : '');
+  } else if (r) {
+    note.innerHTML = 'Points <b class="gold">' + r.pt + '</b>' +
+      (S.bo > 0 ? ' <b class="warn">· BLACKOUT</b>' : '') +
+      (r.d ? ' <b class="warn">· down</b>' : '');
+  }
 }
 
 /* ================================================================ canvas io */
@@ -1106,9 +1199,19 @@ function draw() {
       if (Math.random() < 0.5) {
         VFX.part({ x: p.x, y: p.y - (p.h || 0), vx: 0, vy: 0, life: 0.22, size: 2.2, c: p.c, drag: 1 });
       }
-      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
       ctx.fillStyle = p.c;
-      ctx.beginPath(); ctx.arc(p.x, p.y - (p.h || 0), p.k === 'lob' ? 5 : 3.5, 0, Math.PI * 2); ctx.fill();
+      if (p.k === 'bolt') {
+        /* a tracer, pointed the way it is travelling, so you can judge whether
+           it is going to reach you */
+        ctx.translate(p.x, p.y); ctx.rotate(p.a || 0);
+        ctx.beginPath(); ctx.ellipse(0, 0, 8, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.ellipse(2.5, 0, 3.2, 1.3, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y - (p.h || 0), 5, 0, Math.PI * 2); ctx.fill();
+      }
       ctx.restore();
     }
 

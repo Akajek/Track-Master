@@ -145,6 +145,11 @@ const VFX = (() => {
         burst(e.x, e.y, { n: 6, c: [e.c, '#fff'], spd0: 40, spd1: 150, size0: 1, size1: 2.4, life0: 0.1, life1: 0.3 });
         break;
       case 'boom': explosion(e.x, e.y, e.r, e.c); break;
+      case 'fizzle':
+        /* A shot that was dodged: it should be visible that it missed. */
+        burst(e.x, e.y, { n: 4, c: [e.c, '#94a3b8'], spd0: 15, spd1: 60, size0: 1, size1: 2,
+          life0: 0.15, life1: 0.35, drag: 0.88 });
+        break;
       case 'hit':
         text(e.x + rnd(-9, 9), e.y - 14, '-' + e.a, { c: e.id === myId ? '#fca5a5' : '#e5e7eb', size: e.id === myId ? 14 : 11 });
         burst(e.x, e.y, { n: e.id === myId ? 9 : 4, c: ['#fecaca', '#f87171'], spd0: 30, spd1: 140, size0: 1, size1: 2.6, life0: 0.15, life1: 0.4 });
