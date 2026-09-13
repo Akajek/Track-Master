@@ -3,6 +3,10 @@
 'use strict';
 process.env.PORT = '18765';
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const http = require('http');
 const WebSocket = require('ws');
 const { server, rooms, pathConnected } = require('../server.js');
 
@@ -34,8 +38,32 @@ async function waitFor(fn, what, ms = 4000) {
 const me = c => c.state.r.find(r => r.id === c.welcome.id);
 const towerAt = (c, x, y) => c.state.tw.find(t => t.gx === x && t.gy === y);
 
+function get(urlPath) {
+  return new Promise((resolve, reject) => {
+    http.get('http://localhost:18765' + urlPath, res => {
+      let body = '';
+      res.on('data', d => { body += d; });
+      res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body }));
+    }).on('error', reject);
+  });
+}
+
 async function main() {
   await new Promise(r => server.listening ? r() : server.once('listening', r));
+
+  /* --- the client's files are actually shipped and actually parse ---------- */
+  const audio = fs.readFileSync(path.join(__dirname, '..', 'public', 'audio.js'), 'utf8');
+  new vm.Script(audio);                              // throws on a syntax error
+  const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.ok(/<script src="audio\.js"><\/script>/.test(page), 'index.html loads audio.js');
+  assert.ok(page.indexOf('<script src="audio.js">') < page.indexOf("SFX.init()"),
+    'audio.js is loaded before the code that calls SFX');
+  const served = await get('/audio.js');
+  assert.strictEqual(served.status, 200, 'the server serves audio.js');
+  assert.strictEqual(served.type, 'text/javascript', 'audio.js is served as javascript');
+  assert.ok(served.body.includes('SFX'), 'audio.js arrives intact');
+  const health = await get('/healthz');
+  assert.strictEqual(health.status, 200, 'health check for Render responds');
   const mm = await client('Boss', 'mm', '');
   const code = mm.welcome.room;
   assert.strictEqual(mm.welcome.role, 'mm', 'first player gets the Mastermind seat');
@@ -149,6 +177,15 @@ async function main() {
   mm.send({ t: 'ability', a: 'meteor', x: 60, y: 20 });
   await waitFor(() => mm.state.mt.length === 1, 'meteor incoming');
   await waitFor(() => mm.state.mt.length === 0, 'meteor landed', 3000);
+
+  /* --- every sound the client asks for by name exists ---------------------- */
+  const voices = new Set();
+  const voiceBlock = audio.slice(audio.indexOf('const V = {'), audio.indexOf('/* ------------------------------------------------- server event'));
+  for (const m of voiceBlock.matchAll(/^\s{4}(\w+):/gm)) voices.add(m[1]);
+  assert.ok(voices.size > 15, 'found the voice table (' + voices.size + ' voices)');
+  for (const m of page.matchAll(/SFX\.play\('(\w+)'/g)) {
+    assert.ok(voices.has(m[1]), 'client plays "' + m[1] + '" but audio.js has no such voice');
+  }
 
   /* --- seat handover ------------------------------------------------------ */
   mm.ws.close();

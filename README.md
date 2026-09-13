@@ -36,6 +36,18 @@ rebuilds; the track is quick to draw).
 `render.yaml` pins the region to `frankfurt`. Change it before the first deploy
 if the players are elsewhere; Render cannot move a service afterwards.
 
+## Sound
+
+Everything you hear is generated in the browser with the Web Audio API: there
+are no audio files in the repo, nothing extra to download, and nothing extra for
+Render to serve. Towers, explosions, hits and pickups are panned to where they
+happen on the board, so a mortar on the left sounds like it is on the left.
+
+The speaker button in the top bar toggles sound and the slider sets the volume;
+`M` toggles it too. Both settings are remembered per browser. Browsers block
+audio until you interact with the page, so sound starts the moment you click a
+join button.
+
 ## How to play
 
 ### Mastermind
@@ -76,6 +88,9 @@ top bar. The Mastermind can also step down and become a runner.
 - `server.js` — serves the page and runs every room. Authoritative simulation
   at 20 ticks/s; clients only send intentions.
 - `public/index.html` — the whole client: lobby, canvas renderer, both sidebars.
+- `public/audio.js` — every sound effect, synthesized at runtime. No assets.
 - `test/game.test.js` — end-to-end test that boots the server and plays a round
-  with a Mastermind and a Runner over real WebSockets. Run with `npm test`.
+  with a Mastermind and a Runner over real WebSockets. It also checks that the
+  client's files are served correctly and that every sound the client asks for
+  exists. Run with `npm test`.
 - `render.yaml` — Render blueprint.

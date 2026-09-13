@@ -212,7 +212,7 @@ function damage(room, p, amt, now, srcType) {
   amt *= (1 - 0.09 * p.up.armor);
   p.hp -= amt;
   p.lastHurt = now;
-  if (srcType !== 'flame') room.events.push({ k: 'hit', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(amt) });
+  if (srcType !== 'flame') room.events.push({ k: 'hit', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(amt), id: p.id, s: srcType });
   if (p.hp <= 0) {
     p.hp = 0; p.dead = true; p.respawnAt = now + 2500; p.deaths++; p.points += POINTS_PER_DEATH;
     room.gold += GOLD_PER_KILL;
@@ -312,6 +312,7 @@ function tick(room, now) {
       const dmg = towerStat(tw, 'dmg');
       if (tw.type === 'turret') {
         room.projectiles.push({ x: tw.x, y: tw.y, tid: best.id, spd: def.proj, dmg, c: def.color, kind: 'homing' });
+        room.events.push({ k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'turret' });
       } else if (tw.type === 'sniper') {
         damage(room, best, dmg, now, 'sniper');
         room.events.push({ k: 'shot', x1: Math.round(tw.x), y1: Math.round(tw.y), x2: Math.round(best.x), y2: Math.round(best.y), c: def.color, w: 3 });
@@ -319,6 +320,7 @@ function tick(room, now) {
         const dist = Math.hypot(best.x - tw.x, best.y - tw.y);
         room.projectiles.push({ x: tw.x, y: tw.y, tx: best.x, ty: best.y, sx: tw.x, sy: tw.y, t: 0,
           dur: dist / def.proj, dmg, splash: def.splash, c: def.color, kind: 'lob' });
+        room.events.push({ k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'mortar' });
       } else if (tw.type === 'tesla') {
         const hit = [best]; let last = best; let d = dmg;
         damage(room, best, d, now, 'tesla');

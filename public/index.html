@@ -57,6 +57,9 @@
   .kbd { display:inline-block; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; font-size:11px; background:#0f1428; }
   #towerPanel { background:var(--panel2); border:1px solid var(--accent); border-radius:8px; padding:10px; margin-top:10px; }
   .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  input[type=range] { width:72px; padding:0; background:transparent; border:none; accent-color:var(--accent); vertical-align:middle; cursor:pointer; }
+  #soundWrap { display:flex; align-items:center; gap:6px; }
+  #soundBtn { padding:3px 8px; font-size:14px; line-height:1; }
 </style>
 </head>
 <body>
@@ -85,6 +88,10 @@
     <span class="pill" id="phasePill"></span>
     <span class="grow"></span>
     <span class="pill" id="statPill"></span>
+    <span id="soundWrap">
+      <button id="soundBtn" title="Sound on/off (M)">&#128266;</button>
+      <input id="volSlider" type="range" min="0" max="100" step="1" title="Volume">
+    </span>
     <button id="switchRole" style="font-size:12px"></button>
   </div>
   <div id="main">
@@ -96,6 +103,7 @@
   </div>
 </div>
 
+<script src="audio.js"></script>
 <script>
 'use strict';
 /* =============================================================== networking */
@@ -110,8 +118,11 @@ let selTower = null;                         /* selected tower key 'x,y' */
 let hover = null;                            /* hovered cell {x,y} */
 let painting = false, paintTile = null, lastPaint = null;
 const keys = {};
+/* Sound is driven by changes between snapshots, so the last one is kept. */
+let prevEdit = null, prevFrz = 0, prevDead = false, prevSlow = false, prevMeteors = 0;
 
 function connect(role) {
+  SFX.init();                                  /* a click: audio is allowed now */
   const name = $('name').value.trim();
   const room = $('room').value.trim().toUpperCase();
   if (!name) { $('lobbyMsg').textContent = 'Type a name first.'; return; }
@@ -142,14 +153,41 @@ function onMsg(m) {
     if (S) S.edit = m.edit ? 1 : 0;
     buildSide();
   } else if (m.t === 's') {
-    const prevEdit = S ? S.edit : -1;
+    const wasEdit = S ? S.edit : -1;
     S = m; lastStateAt = performance.now();
-    for (const e of m.ev) spawnFx(e);
-    if (prevEdit !== m.edit && grid) grid.edit = !!m.edit;
+    for (const e of m.ev) { spawnFx(e); SFX.event(e, me.id); }
+    if (wasEdit !== m.edit && grid) grid.edit = !!m.edit;
+    soundFromState(m);
     updateSide();
   } else if (m.t === 'role') {
     me.role = m.role; toolKind = null; selTower = null; buildSide();
-  } else if (m.t === 'msg') toast(m.text, m.kind);
+  } else if (m.t === 'msg') { toast(m.text, m.kind); SFX.play(m.kind === 'good' ? 'good' : m.kind === 'warn' ? 'warn' : 'info'); }
+}
+
+/* Things that are a state, not an event: going live, freezing, dying, getting
+   stuck in glue. Each one makes a noise the first frame it becomes true. */
+function soundFromState(m) {
+  if (prevEdit !== null && prevEdit !== m.edit) SFX.play(m.edit ? 'edit' : 'live');
+  prevEdit = m.edit;
+
+  if (m.frz > 0 && prevFrz <= 0) SFX.play('freeze');
+  else if (m.frz <= 0 && prevFrz > 0) SFX.play('unfreeze');
+  prevFrz = m.frz;
+
+  if (m.mt.length > prevMeteors) SFX.meteorIncoming(m.mt[m.mt.length - 1].x);
+  prevMeteors = m.mt.length;
+
+  const r = myRunner();
+  if (r) {
+    if (!r.d && prevDead) SFX.play('respawn');
+    prevDead = !!r.d;
+    if (r.sl && !prevSlow) SFX.play('slow', 0);
+    prevSlow = !!r.sl;
+    SFX.lowHp(!r.d && r.hp / r.mh < 0.3);
+  } else { prevDead = false; prevSlow = false; SFX.lowHp(false); }
+
+  /* Flamers hum only while at least one of them is actually burning. */
+  SFX.flame(!m.edit && m.tw.some(t => t.ty === 'flame' && t.f && !t.dis));
 }
 
 function toast(text, kind) {
@@ -376,7 +414,7 @@ function paintLine(c) {
   const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
   let err = dx - dy;
   for (let guard = 0; guard < 200; guard++) {
-    send({ t: 'paint', x: x0, y: y0, tile: paintTile });
+    send({ t: 'paint', x: x0, y: y0, tile: paintTile }); SFX.play('paint');
     if (x0 === x1 && y0 === y1) break;
     const e2 = 2 * err;
     if (e2 > -dy) { err -= dy; x0 += sx; }
@@ -424,6 +462,8 @@ window.addEventListener('keydown', e => {
   if (!me || e.target.tagName === 'INPUT') return;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
+  SFX.init();
+  if (e.code === 'KeyM') { toggleSound(); return; }
   if (me.role === 'runner') {
     if (e.code === 'Space') send({ t: 'act', a: 'dash' });
     else if (e.code === 'KeyE') send({ t: 'act', a: 'emp' });
@@ -443,6 +483,7 @@ window.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (me && me.role === 'runner') sendInput(); });
 
+document.addEventListener('click', e => { SFX.init(); if (e.target.closest('button')) SFX.play('ui'); });
 $('joinMM').onclick = () => connect('mm');
 $('joinRun').onclick = () => connect('runner');
 $('switchRole').onclick = () => send({ t: 'role', role: isMM() ? 'runner' : 'mm' });
@@ -450,6 +491,17 @@ $('copyLink').onclick = () => {
   const link = location.origin + '/?room=' + me.room;
   navigator.clipboard.writeText(link).then(() => toast('Link copied: ' + link, 'good'), () => prompt('Copy this link', link));
 };
+function updateSoundUI() {
+  $('soundBtn').innerHTML = SFX.isEnabled() && SFX.getVolume() > 0 ? '&#128266;' : '&#128263;';
+  $('soundBtn').classList.toggle('sel', SFX.isEnabled() && SFX.getVolume() > 0);
+  $('volSlider').value = Math.round(SFX.getVolume() * 100);
+}
+function toggleSound() { SFX.setEnabled(!SFX.isEnabled()); updateSoundUI(); if (SFX.isEnabled()) SFX.play('good'); }
+$('soundBtn').onclick = toggleSound;
+$('volSlider').oninput = e => { SFX.setVolume(e.target.value / 100); updateSoundUI(); };
+$('volSlider').onchange = () => SFX.play('info');
+updateSoundUI();
+
 $('room').value = new URLSearchParams(location.search).get('room') || '';
 try { $('name').value = localStorage.getItem('tm_name') || ''; } catch (e) {}
 $('name').addEventListener('keydown', e => { if (e.key === 'Enter') connect('runner'); });
