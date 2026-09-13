@@ -102,6 +102,10 @@
                 padding:10px; margin-top:10px; }
   #towerPanel .trk { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-top:5px; }
   #towerPanel .trk button { flex:1; }
+  #towerPanel .trk .all { flex:0 0 auto; font-size:12px; padding:6px 8px; color:var(--muted); }
+  #towerPanel .trk .all:hover:not(:disabled) { color:var(--text); }
+  #towerPanel .trk .c2 { font-size:12px; opacity:.75; min-width:34px; text-align:right; }
+  #towerPanel .trk .c1 { min-width:38px; text-align:right; }
 
   #toasts { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex;
             flex-direction:column; gap:6px; pointer-events:none; z-index:5; align-items:center; }

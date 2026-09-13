@@ -115,13 +115,17 @@ END and a connected path between them.
 | | |
 |---|---|
 | Track tools | Path brush, eraser, set START, set END, and Snake / Zigzag / Spiral presets that fit whatever map size you picked. |
+| Speed painting | Hold `Shift` and drag to lay a whole line of anything in one motion, or to sell a line with the right button. The line is filled in between mouse samples, so dragging fast leaves no gaps. |
+| Bucket fill | Pick a building, turn the bucket on, click the board. It spreads outwards from that tile onto every tile that will take one until the gold runs out. The cursor shows how many you can afford. |
+| Select area | Drag a rectangle. While one is set, mass upgrades and Sell only touch what is inside it. `Esc` clears it. |
+| Mass upgrade | Every track row in a building's panel has an **all N** button: it raises that track on every building of the same type at once and charges the whole bill in one go, cheapest first if you cannot cover all of them. |
 | Towers (empty ground) | Turret, Sniper, Mortar (splash, blind up close), Tesla (chains), Pulse (hits everything around it, never misses), Laser (beam that burns hotter the longer it holds), Flamer, Frost (slow aura). |
 | Aim | Turret bolts and mortar shells are real objects: they take time to arrive and they lead their target. Hold one direction and a shot will meet you; change direction and it sails past. Both sell a **Velocity** track to make them harder to dodge. Beams and hitscan shots (Laser, Sniper, Tesla, Pulse) land the instant they fire, so they have no Velocity track and cannot be dodged. |
 | Traps (on the path) | Spikes, Glue, Saw (shreds anyone standing on it), Mine (one big blast, then gone), Snare (roots you in place), Portal (sends you all the way back to START). |
 | Upgrades | Click a building to open its panel. Each has its own tracks: Damage, Range, Rate or Power. Every track is uncapped. |
 | Forms | Buildings do not have a level. They have a **form**, and they grow into a new one every five upgrades: at 5, 10, 15, 20, 25 and 30. Each form looks different, has its own name, and carries a stat bonus of its own. Past 30 the shape stops changing and upgrades only feed the stats. |
 | Abilities | Meteor, Barrage (six shells), Freeze, Overdrive (every tower fires double time), Blackout (runners lose every ability). |
-| Hotkeys | `1`-`9` pick a building, `X` sells the selected one, `Esc` deselects, right-click sells. |
+| Hotkeys | `1`-`9` pick a building, `X` sells the selected one, right-click sells, `Esc` clears the tool, the selection and the area. |
 
 ### Runner
 

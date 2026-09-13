@@ -19,11 +19,22 @@ const disp = new Map();                    /* smoothed runner positions */
 let toolKind = null, toolType = null;      /* mastermind's current tool */
 let selTower = null;                       /* "gx,gy" of the selected building */
 let hover = null;
-let painting = false, paintTile = null, lastPaint = null;
+let stroke = null;            /* an in-progress drag: paint, place or sell */
+let area = null;              /* tile rectangle the bulk actions are aimed at */
+let areaDrag = null;
+let bucket = false;           /* the fill tool: place until the gold runs out */
 let showSettings = false;
+let panelFor = null;          /* which building the selected-panel DOM belongs to */
+const panelEls = {};
+function areaBox() { return area ? { x0: area.x0, y0: area.y0, x1: area.x1, y1: area.y1 } : null; }
+function inArea(t) {
+  if (!area) return true;
+  const x0 = Math.min(area.x0, area.x1), x1 = Math.max(area.x0, area.x1);
+  const y0 = Math.min(area.y0, area.y1), y1 = Math.max(area.y0, area.y1);
+  return t.gx >= x0 && t.gx <= x1 && t.gy >= y0 && t.gy <= y1;
+}
 const keys = {};
 const el = {};                             /* cached sidebar nodes */
-let panelSig = '';
 
 /* transitions that make a noise or a flash the first frame they become true */
 let prevEdit = null, prevFrz = 0, prevDead = false, prevSlow = false;
@@ -83,7 +94,6 @@ function onMsg(m) {
     }
     case 'tw':
       towers = m.tw;
-      panelSig = '';
       break;
     case 's': {
       S = m; lastStateAt = performance.now();
@@ -167,7 +177,7 @@ function buildSide() {
   if (!me || !D || !SET) return;
   side.innerHTML = '';
   for (const k in el) delete el[k];
-  panelSig = '';
+  panelFor = null;
   $('rolePill').textContent = isMM() ? 'MASTERMIND' : 'RUNNER · ' + me.name;
   $('switchRole').textContent = isMM() ? 'Become a runner' : 'Take the Mastermind seat';
   if (isMM()) buildMM(); else buildRunner();
@@ -198,13 +208,17 @@ function buildMM() {
       '<button data-preset="zigzag">Preset: Zigzag</button>' +
       '<button data-preset="spiral">Preset: Spiral</button>' +
       '<button data-preset="blank">Clear track</button>' +
+      '<button data-tool="area" title="Drag a rectangle. Bulk actions then only touch what is inside it.">Select area</button>' +
+      '<button id="bucketBtn" title="Click the board with a building picked and it spreads outwards until the gold runs out.">&#129516; Bucket fill</button>' +
     '</div>' +
+    '<div class="hint">Hold <span class="kbd">Shift</span> and drag to lay a whole line of anything, ' +
+    'or to sell a line with the right button. <span class="kbd">Esc</span> clears the tool and the area.</div>' +
     '<h3>Towers <span class="muted">(on empty ground)</span></h3><div class="list" id="towerList"></div>' +
     '<h3>Traps <span class="muted">(on the path)</span></h3><div class="list" id="trapList"></div>' +
     '<div id="towerPanel" style="display:none"></div>' +
     '<h3>Abilities</h3><div class="list" id="abList"></div>' +
     '<h3>Danger zone</h3><div class="grid2">' +
-      '<button id="clearTowers">Sell everything</button>' +
+      '<button id="clearTowers"></button>' +
       '<button id="resetVp">Reset VP</button>' +
     '</div>' +
     '<div class="hint">Click a building to select it. <span class="kbd">1</span>-<span class="kbd">9</span> pick, ' +
@@ -244,7 +258,13 @@ function buildMM() {
     $('abList').appendChild(b);
     el.abBtns.push(b);
   }
-  $('clearTowers').onclick = () => { if (confirm('Sell every tower and trap?')) send({ t: 'clearTowers' }); };
+  el.clearBtn = $('clearTowers');
+  el.clearBtn.onclick = () => {
+    const what = area ? 'everything inside the selected area' : 'every tower and trap';
+    if (confirm('Sell ' + what + '?')) send({ t: 'clearTowers', area: areaBox() });
+  };
+  el.bucketBtn = $('bucketBtn');
+  el.bucketBtn.onclick = () => { bucket = !bucket; updateSide(); };
   $('resetVp').onclick = () => { if (confirm('Reset both victory point scores?')) send({ t: 'resetVp' }); };
   el.towerPanel = $('towerPanel');
 }
@@ -362,9 +382,12 @@ function updateMM() {
       : 'Build any time. Editing the track parks the runners at the start.';
   }
   for (const b of el.trackTools || []) {
-    b.disabled = !S.edit;
+    /* the area picker is not a track edit, so it works while the round is live */
+    b.disabled = b.dataset.tool !== 'area' && !S.edit;
     b.classList.toggle('sel', toolKind === b.dataset.tool);
   }
+  if (el.bucketBtn) el.bucketBtn.classList.toggle('sel', bucket);
+  if (el.clearBtn) el.clearBtn.textContent = area ? 'Sell area' : 'Sell everything';
   for (const b of side.querySelectorAll('[data-preset]')) b.disabled = !S.edit;
   for (const b of el.buildBtns || []) {
     const type = b.dataset.type, cost = RULES.buildCost(SET, defOf(type));
@@ -381,42 +404,96 @@ function updateMM() {
   updateTowerPanel();
 }
 
+/* The selected-building panel.
+ *
+ * The DOM here is built once per selected building and then only its text and
+ * disabled flags change. It used to be rebuilt from innerHTML on every snapshot
+ * because the signature included the gold total, which ticks constantly -- so
+ * the button you were clicking was routinely destroyed between mousedown and
+ * click, and roughly half of all upgrade clicks were swallowed. */
 function updateTowerPanel() {
   const panel = el.towerPanel;
   if (!panel) return;
   const tw = selTower && towers.find(t => t.gx + ',' + t.gy === selTower);
-  if (!tw) { selTower = null; panel.style.display = 'none'; panelSig = ''; return; }
+  if (!tw) { selTower = null; panel.style.display = 'none'; panelFor = null; return; }
   const def = defOf(tw.ty);
-  const dyn = twDyn.get(tw.id) || {};
-  const sig = tw.id + '|' + JSON.stringify(tw.up) + '|' + S.gold + '|' + (dyn.d || 0) + '|' + tw.ty;
-  if (sig === panelSig) return;
-  panelSig = sig;
+  if (panelFor !== tw.id) buildTowerPanel(tw, def);
+  refreshTowerPanel(tw, def);
+}
+
+function buildTowerPanel(tw, def) {
+  const panel = el.towerPanel;
   panel.style.display = '';
-  /* A building has no level: it has a shape, and a count of upgrades until the
-     next one. */
-  const form = RULES.form(tw.up), left = RULES.toNextForm(tw.up);
-  const nextName = form < RULES.MAX_FORM ? def.forms[form + 1] : null;
-  let html = '<b><span class="sw" style="background:' + def.color + '"></span> ' +
-    esc(RULES.formName(def, tw.up)) + '</b>' +
-    (dyn.d ? ' <span class="warn">EMP&apos;d</span>' : '') +
-    '<div class="hint">' + esc(def.name) + ' · form ' + (form + 1) + ' of ' + (RULES.MAX_FORM + 1) + ' · ' +
-    (nextName ? left + ' more upgrade' + (left === 1 ? '' : 's') + ' &rarr; <b>' + esc(nextName) + '</b>'
-              : '<b class="gold">final form</b>') + '</div>' +
-    '<div class="hint">' + RULES.statLine(def, tw.up, SET) + '</div>';
-  const cost = RULES.trackCost(SET, def, RULES.upgrades(tw.up));
+  panel.innerHTML = '';
+  panelFor = tw.id;
+  for (const k in panelEls) delete panelEls[k];
+  const gx = tw.gx, gy = tw.gy, type = tw.ty;
+
+  const head = document.createElement('div');
+  head.innerHTML =
+    '<b><span class="sw" style="background:' + def.color + '"></span> <span class="fname"></span></b>' +
+    '<span class="emp warn"></span><div class="hint sub"></div><div class="hint stats"></div>';
+  panel.appendChild(head);
+  panelEls.fname = head.querySelector('.fname');
+  panelEls.emp = head.querySelector('.emp');
+  panelEls.sub = head.querySelector('.sub');
+  panelEls.stats = head.querySelector('.stats');
+
+  panelEls.tracks = [];
   for (const tr of def.tracks) {
-    html += '<div class="trk"><button data-trk="' + tr + '"' + (S.gold < cost ? ' disabled' : '') + '>' +
-      D.TRACKS[tr].name + ' +' + ((tw.up[tr] || 0) + 1) + '</button>' +
-      '<span class="gold">' + cost + '</span></div>';
+    const row = document.createElement('div');
+    row.className = 'trk';
+    row.innerHTML = '<button class="one"></button><span class="gold c1"></span>' +
+                    '<button class="all"></button><span class="gold c2"></span>';
+    panel.appendChild(row);
+    const one = row.querySelector('.one'), all = row.querySelector('.all');
+    one.onclick = () => send({ t: 'tup', x: gx, y: gy, track: tr });
+    all.onclick = () => send({ t: 'massUp', type, track: tr, area: areaBox() });
+    panelEls.tracks.push({ tr, one, all, c1: row.querySelector('.c1'), c2: row.querySelector('.c2') });
   }
-  if (!def.tracks.length) html += '<div class="hint">No upgrades for this one.</div>';
-  html += '<div class="trk"><button id="sellBtn">Sell</button>' +
-    '<span class="gold">+' + RULES.sellValue(tw.sp) + '</span></div>';
-  panel.innerHTML = html;
-  for (const b of panel.querySelectorAll('[data-trk]')) {
-    b.onclick = () => send({ t: 'tup', x: tw.gx, y: tw.gy, track: b.dataset.trk });
+  if (!def.tracks.length) {
+    const none = document.createElement('div');
+    none.className = 'hint';
+    none.textContent = 'Nothing to upgrade on this one.';
+    panel.appendChild(none);
   }
-  $('sellBtn').onclick = () => { send({ t: 'sell', x: tw.gx, y: tw.gy }); selTower = null; };
+  const sellRow = document.createElement('div');
+  sellRow.className = 'trk';
+  sellRow.innerHTML = '<button class="sell">Sell</button><span class="gold sv"></span>';
+  panel.appendChild(sellRow);
+  sellRow.querySelector('.sell').onclick = () => { send({ t: 'sell', x: gx, y: gy }); selTower = null; };
+  panelEls.sell = sellRow.querySelector('.sv');
+}
+
+function refreshTowerPanel(tw, def) {
+  const dyn = twDyn.get(tw.id) || {};
+  const form = RULES.form(tw.up), left = RULES.toNextForm(tw.up);
+  const next = form < RULES.MAX_FORM ? def.forms[form + 1] : null;
+  panelEls.fname.textContent = RULES.formName(def, tw.up);
+  panelEls.emp.textContent = dyn.d ? '  EMP’d' : '';
+  panelEls.sub.innerHTML = esc(def.name) + ' · form ' + (form + 1) + ' of ' + (RULES.MAX_FORM + 1) + ' · ' +
+    (next ? left + ' more upgrade' + (left === 1 ? '' : 's') + ' &rarr; <b>' + esc(next) + '</b>'
+          : '<b class="gold">final form</b>');
+  panelEls.stats.textContent = RULES.statLine(def, tw.up, SET);
+
+  const cost = RULES.trackCost(SET, def, RULES.upgrades(tw.up));
+  const group = towers.filter(t => t.ty === tw.ty && inArea(t));
+  let massCost = 0;
+  for (const t of group) massCost += RULES.trackCost(SET, def, RULES.upgrades(t.up));
+  const where = area ? 'in the selected area' : 'on the board';
+  for (const row of panelEls.tracks) {
+    const name = D.TRACKS[row.tr].name;
+    row.one.textContent = name + ' +' + ((tw.up[row.tr] || 0) + 1);
+    row.one.disabled = S.gold < cost;
+    row.one.title = D.TRACKS[row.tr].desc;
+    row.c1.textContent = cost;
+    row.all.textContent = 'all ' + group.length;
+    row.all.disabled = group.length < 2 || S.gold < cost;
+    row.all.title = name + ' +1 on every ' + def.name + ' ' + where +
+      '. The whole bill is ' + massCost + ' gold; cheapest first if you cannot cover it all.';
+    row.c2.textContent = massCost;
+  }
+  panelEls.sell.textContent = '+' + RULES.sellValue(tw.sp);
 }
 
 function updateRunner() {
@@ -448,7 +525,7 @@ function setTool(kind, type) {
   if (toolKind === kind && toolType === (type || null)) { toolKind = null; toolType = null; }
   else { toolKind = kind; toolType = type || null; }
   if (toolKind) selTower = null;
-  panelSig = '';
+  if (toolKind !== 'tower') bucket = false;
   updateSide();
 }
 
@@ -578,67 +655,113 @@ function cellFromEvent(e) {
 }
 function inGrid(c) { return grid && c.x >= 0 && c.y >= 0 && c.x < grid.gw && c.y < grid.gh; }
 
+/* --------------------------------------------------------------- pointer */
+/* One stroke machine drives every drag: painting track, laying towers, selling,
+   and dragging out an area. Holding Shift turns a click into a stroke for the
+   tools that would otherwise be one-shot, which is the "speed painting" bit. */
 cv.addEventListener('contextmenu', e => e.preventDefault());
-cv.addEventListener('mousemove', e => {
-  if (!D) return;
-  hover = cellFromEvent(e);
-  if (painting && isMM() && inGrid(hover)) paintLine(hover);
-});
-cv.addEventListener('mouseleave', () => { hover = null; painting = false; lastPaint = null; });
 
-/* Paint every cell between the last mouse position and this one, so a fast drag
-   leaves an unbroken track instead of a dotted line. */
-function paintLine(c) {
-  if (!lastPaint) lastPaint = c;
-  let x0 = lastPaint.x, y0 = lastPaint.y;
-  const x1 = c.x, y1 = c.y;
-  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+function cellsAlong(a, b, fn) {
+  let x0 = a.x, y0 = a.y;
+  const dx = Math.abs(b.x - x0), dy = Math.abs(b.y - y0);
+  const sx = x0 < b.x ? 1 : -1, sy = y0 < b.y ? 1 : -1;
   let err = dx - dy;
-  for (let guard = 0; guard < 300; guard++) {
-    send({ t: 'paint', x: x0, y: y0, tile: paintTile });
-    SFX.play('paint');
-    if (x0 === x1 && y0 === y1) break;
+  for (let guard = 0; guard < 500; guard++) {
+    fn(x0, y0);
+    if (x0 === b.x && y0 === b.y) break;
     const e2 = 2 * err;
     if (e2 > -dy) { err -= dy; x0 += sx; }
     if (e2 < dx) { err += dx; y0 += sy; }
   }
-  lastPaint = { x: x1, y: y1 };
 }
+
+function applyCell(x, y) {
+  if (!grid || x < 0 || y < 0 || x >= grid.gw || y >= grid.gh) return;
+  if (stroke.kind === 'paint') {
+    send({ t: 'paint', x, y, tile: stroke.tile });
+    SFX.play('paint');
+  } else if (stroke.kind === 'place') {
+    if (!towerAt(x, y)) send({ t: 'tower', type: stroke.type, x, y });
+  } else if (stroke.kind === 'sell') {
+    if (towerAt(x, y)) {
+      send({ t: 'sell', x, y });
+      if (selTower === x + ',' + y) selTower = null;
+    }
+  }
+}
+
+function strokeTo(c) {
+  if (!stroke) return;
+  const from = stroke.last || { x: c.x, y: c.y };
+  cellsAlong(from, c, applyCell);
+  stroke.last = { x: c.x, y: c.y };
+}
+
+cv.addEventListener('mousemove', e => {
+  if (!D) return;
+  hover = cellFromEvent(e);
+  if (!inGrid(hover)) return;
+  if (stroke) strokeTo(hover);
+  else if (areaDrag) area = { x0: areaDrag.x, y0: areaDrag.y, x1: hover.x, y1: hover.y };
+});
+cv.addEventListener('mouseleave', () => { hover = null; endStroke(); });
 
 cv.addEventListener('mousedown', e => {
   if (!D || !isMM() || !S) return;
   const c = cellFromEvent(e);
   if (!inGrid(c)) return;
-  if (e.button === 2) {
-    if (towerAt(c.x, c.y)) { send({ t: 'sell', x: c.x, y: c.y }); if (selTower === c.x + ',' + c.y) selTower = null; }
+  const fast = e.shiftKey;
+
+  if (e.button === 2) {                                  /* right: sell */
+    stroke = { kind: 'sell', drag: fast };
+    strokeTo(c);
+    if (!fast) endStroke();
     return;
   }
   const T = D.T;
+  if (toolKind === 'area') {
+    areaDrag = { x: c.x, y: c.y };
+    area = { x0: c.x, y0: c.y, x1: c.x, y1: c.y };
+    return;
+  }
   if (toolKind === 'path' || toolKind === 'erase') {
     if (!S.edit) return;
-    painting = true; lastPaint = null;
-    paintTile = toolKind === 'path' ? T.PATH : T.EMPTY;
-    paintLine(c);
+    stroke = { kind: 'paint', tile: toolKind === 'path' ? T.PATH : T.EMPTY, drag: true };
+    strokeTo(c);
   } else if (toolKind === 'start' || toolKind === 'end') {
     if (!S.edit) return;
     send({ t: 'paint', x: c.x, y: c.y, tile: toolKind === 'start' ? T.START : T.END });
   } else if (toolKind === 'tower') {
-    if (towerAt(c.x, c.y)) { selTower = c.x + ',' + c.y; toolKind = null; toolType = null; updateSide(); return; }
-    send({ t: 'tower', type: toolType, x: c.x, y: c.y });
+    if (bucket) { send({ t: 'fill', type: toolType, x: c.x, y: c.y }); return; }
+    if (towerAt(c.x, c.y) && !fast) {
+      selTower = c.x + ',' + c.y; toolKind = null; toolType = null; updateSide();
+      return;
+    }
+    stroke = { kind: 'place', type: toolType, drag: fast };
+    strokeTo(c);
+    if (!fast) endStroke();
   } else if (toolKind === 'aim') {
     send({ t: 'ability', a: toolType, x: c.px, y: c.py });
     toolKind = null; toolType = null; updateSide();
   } else {
     selTower = towerAt(c.x, c.y) ? c.x + ',' + c.y : null;
-    panelSig = '';
     updateSide();
   }
 });
+
+function endStroke() {
+  stroke = null;
+  if (areaDrag) {
+    areaDrag = null;
+    if (area && area.x0 === area.x1 && area.y0 === area.y1) area = null;   /* a click clears it */
+    updateSide();
+  }
+}
 cv.addEventListener('mouseup', e => {
-  if (painting && isMM() && D) { const c = cellFromEvent(e); if (inGrid(c)) paintLine(c); }
+  if (stroke && stroke.drag && D) { const c = cellFromEvent(e); if (inGrid(c)) strokeTo(c); }
+  endStroke();
 });
-window.addEventListener('mouseup', () => { painting = false; lastPaint = null; });
+window.addEventListener('mouseup', endStroke);
 
 /* ------------------------------------------------------------------ keyboard */
 function sendInput() {
@@ -671,7 +794,7 @@ window.addEventListener('keydown', e => {
       const i = +e.code.slice(5) - 1;
       if (types[i]) setTool('tower', types[i]);
     } else if (e.code === 'Escape') {
-      toolKind = null; toolType = null; selTower = null; panelSig = ''; updateSide();
+      toolKind = null; toolType = null; selTower = null; bucket = false; area = null; updateSide();
     } else if (e.code === 'KeyX' && selTower) {
       const [x, y] = selTower.split(',').map(Number);
       send({ t: 'sell', x, y }); selTower = null;
@@ -1229,6 +1352,20 @@ function draw() {
 
   VFX.draw(ctx);
 
+  /* the rectangle the bulk actions are aimed at */
+  if (isMM() && area) {
+    const x0 = Math.min(area.x0, area.x1) * C, y0 = Math.min(area.y0, area.y1) * C;
+    const w = (Math.abs(area.x1 - area.x0) + 1) * C, h = (Math.abs(area.y1 - area.y0) + 1) * C;
+    ctx.save();
+    ctx.fillStyle = 'rgba(125,211,252,.08)';
+    ctx.fillRect(x0, y0, w, h);
+    ctx.setLineDash([7, 5]);
+    ctx.lineDashOffset = -(now / 45) % 12;
+    ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 2;
+    ctx.strokeRect(x0 + 1, y0 + 1, w - 2, h - 2);
+    ctx.restore();
+  }
+
   /* the mastermind's placement preview */
   if (isMM() && hover && inGrid(hover) && S) {
     const hx = hover.x * C, hy = hover.y * C;
@@ -1236,8 +1373,16 @@ function draw() {
       const def = defOf(toolType), t = grid.tiles[hover.y * grid.gw + hover.x];
       const ok = !towerAt(hover.x, hover.y) && (def.onPath ? t === T.PATH : t === T.EMPTY) &&
                  S.gold >= RULES.buildCost(SET, def);
-      ctx.fillStyle = ok ? 'rgba(125,211,252,.3)' : 'rgba(248,113,113,.35)';
+      ctx.fillStyle = bucket ? 'rgba(251,191,36,.35)' : ok ? 'rgba(125,211,252,.3)' : 'rgba(248,113,113,.35)';
       ctx.fillRect(hx, hy, C, C);
+      if (bucket) {
+        /* how many of these the current gold would buy */
+        const n = Math.floor(S.gold / Math.max(1, RULES.buildCost(SET, def)));
+        ctx.fillStyle = '#fbbf24'; ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'center';
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(3,6,16,.85)';
+        ctx.strokeText('FILL x' + n, hx + C / 2, hy - 5);
+        ctx.fillText('FILL x' + n, hx + C / 2, hy - 5);
+      }
       const range = RULES.range(def, {});
       if (range) {
         ctx.strokeStyle = ok ? 'rgba(255,255,255,.55)' : 'rgba(248,113,113,.55)';

@@ -136,6 +136,17 @@ async function main() {
   assert.ok(page.includes('id="hud"'), 'the page has an ability HUD');
   assert.ok(gameSrc.includes('function buildHud'), 'and the client builds it');
   assert.ok(gameSrc.includes('function updateHud'), 'and keeps it up to date');
+  /* Regression guard for the swallowed-click bug: the selected-building panel
+     must not rebuild its DOM from the gold total, or the button you are
+     clicking gets destroyed between mousedown and click. */
+  const panelBody = gameSrc.slice(gameSrc.indexOf('function updateTowerPanel('),
+                                  gameSrc.indexOf('function updateRunner('));
+  assert.ok(!/S\.gold/.test(panelBody.slice(0, panelBody.indexOf('function refreshTowerPanel'))),
+    'updateTowerPanel/buildTowerPanel must not key off the gold total');
+  assert.ok(/panelFor !== tw\.id/.test(panelBody),
+    'the panel DOM is rebuilt only when a different building is selected');
+  assert.strictEqual((panelBody.match(/innerHTML = ''/g) || []).length, 1,
+    'exactly one place clears the panel, and it is the per-building build');
   assert.strictEqual((await get('/healthz')).status, 200, 'health check for Render responds');
 
   /* ---- lobby, roles, defs ------------------------------------------------ */
@@ -346,6 +357,49 @@ async function main() {
     'the dodged bolt did no damage (' + hpAtDodge + ' -> ' + me(run).hp + ')');
   await waitFor(() => !twAt(mm, SX, ROW - 2), 'shooter cleared away');
   await park(mm, run);
+
+  /* ---- bucket fill, mass upgrade and the area rectangle ------------------ */
+  await park(mm, run);
+  mm.send({ t: 'clearTowers' });
+  await waitFor(() => (mm.towers || []).length === 0, 'board cleared for the tool tests');
+  await bankroll(mm, 2000);
+  const spikeCost = RULES.buildCost(mm.set, D.TRAPS.spikes);
+  const affordable = Math.floor(mm.state.gold / spikeCost);
+  mm.send({ t: 'fill', type: 'spikes', x: SX + 4, y: ROW });
+  await waitFor(() => (mm.towers || []).length > 3, 'the bucket spreads spikes along the path', 6000);
+  const filled = mm.towers.length;
+  assert.ok(filled <= affordable, 'the fill never spends gold it does not have');
+  assert.ok(mm.towers.every(t => t.ty === 'spikes'), 'and only puts down what was picked');
+  assert.ok(mm.towers.every(t => t.gy === ROW), 'spikes are traps, so they only land on the path');
+  assert.ok(mm.state.gold < 2000, 'the fill was paid for');
+
+  /* mass upgrade: one track across the whole group, billed together */
+  const before = mm.towers.map(t => RULES.upgrades(t.up));
+  assert.ok(before.every(n => n === 0), 'the fresh spikes start unupgraded');
+  let bill = 0;
+  for (const t of mm.towers) bill += RULES.trackCost(mm.set, D.TRAPS.spikes, RULES.upgrades(t.up));
+  const goldBefore = mm.state.gold;
+  mm.send({ t: 'massUp', type: 'spikes', track: 'dmg' });
+  await waitFor(() => mm.towers.every(t => t.up.dmg === 1), 'every spike gained a damage level at once', 6000);
+  assert.ok(goldBefore - mm.state.gold >= bill - 5, 'and the whole bill was charged (' + bill + ')');
+  assert.ok(mm.msgs.some(t => /Damage \+1 on \d+ Spikes/.test(t)), 'with one message covering the lot');
+
+  /* the area rectangle narrows a bulk action to part of the board */
+  const leftHalf = { x0: 0, y0: 0, x1: SX + 4, y1: ROW + 1 };
+  const inside = mm.towers.filter(t => t.gx <= SX + 4).length;
+  const outside = mm.towers.length - inside;
+  assert.ok(inside > 0 && outside > 0, 'the rectangle splits the row into two groups');
+  mm.send({ t: 'massUp', type: 'spikes', track: 'dmg', area: leftHalf });
+  await waitFor(() => mm.towers.filter(t => t.up.dmg === 2).length === inside,
+    'only the spikes inside the rectangle went up again', 6000);
+  assert.strictEqual(mm.towers.filter(t => t.up.dmg === 1).length, outside,
+    'the ones outside it were left alone');
+
+  mm.send({ t: 'clearTowers', area: leftHalf });
+  await waitFor(() => mm.towers.length === outside, 'selling by area only sells inside it');
+  mm.send({ t: 'clearTowers' });
+  await waitFor(() => mm.towers.length === 0, 'and selling with no area sells the rest');
+  await setOpt(mm, 'twGrow', 100);
 
   /* ---- healing works through damage -------------------------------------- */
   /* Regeneration used to wait two seconds after the last hit. It must not: the

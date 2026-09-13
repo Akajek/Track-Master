@@ -922,6 +922,41 @@ function onJoin(ws, m) {
   shout(room, name + ' joined as ' + (p.role === 'mm' ? 'the Mastermind' : 'a runner') + '.');
 }
 
+/* Shared by single placement and the bucket fill. */
+function canPlace(room, type, x, y) {
+  const def = BUILD[type];
+  if (!def || !inBounds(room, x, y)) return false;
+  if (room.towers.has(x + ',' + y)) return false;
+  const t = room.tiles[idx(room, x, y)];
+  return def.onPath ? t === T.PATH : t === T.EMPTY;
+}
+function placeTower(room, type, x, y, cost, quiet) {
+  const def = BUILD[type];
+  const up = {};
+  for (const tr of def.tracks) up[tr] = 0;
+  room.gold -= cost;
+  room.towers.set(x + ',' + y, {
+    id: room.nextTid++, type, gx: x, gy: y, x: (x + 0.5) * CELL, y: (y + 0.5) * CELL,
+    up, spent: cost, nextShot: 0, disabledUntil: 0, cdUntil: 0, aim: 0, sentAim: 0,
+    firing: false, beam: 0, bx: 0, by: 0,
+  });
+  room.towersDirty = true;
+  if (!quiet) ev(room, { k: 'build', x: (x + 0.5) * CELL, y: (y + 0.5) * CELL, c: def.color });
+}
+
+/* An optional rectangle of tiles, so the bulk actions can be aimed at one part
+   of the board instead of all of it. */
+function cleanArea(a) {
+  if (!a || typeof a !== 'object') return null;
+  const v = [a.x0, a.y0, a.x1, a.y1];
+  if (!v.every(n => Number.isInteger(n))) return null;
+  return { x0: Math.min(a.x0, a.x1), y0: Math.min(a.y0, a.y1),
+           x1: Math.max(a.x0, a.x1), y1: Math.max(a.y0, a.y1) };
+}
+function inArea(area, tw) {
+  return !area || (tw.gx >= area.x0 && tw.gx <= area.x1 && tw.gy >= area.y0 && tw.gy <= area.y1);
+}
+
 function setRole(p, role) {
   const room = p.room, now = Date.now();
   if (role === 'mm') {
@@ -1125,16 +1160,71 @@ function onMessage(ws, raw) {
       if (!def.onPath && t !== T.EMPTY) { note(p, def.name + ' goes on empty ground, not the path.', 'warn'); break; }
       const cost = buildCost(room, m.type);
       if (room.gold < cost) { note(p, 'Not enough gold (' + cost + ' needed).', 'warn'); break; }
-      room.gold -= cost;
-      const up = {};
-      for (const tr of def.tracks) up[tr] = 0;
-      room.towers.set(key, {
-        id: room.nextTid++, type: m.type, gx: x, gy: y, x: (x + 0.5) * CELL, y: (y + 0.5) * CELL,
-        up, spent: cost, nextShot: 0, disabledUntil: 0, cdUntil: 0, aim: 0, sentAim: 0,
-        firing: false, beam: 0, bx: 0, by: 0,
-      });
-      room.towersDirty = true;
-      ev(room, { k: 'build', x: (x + 0.5) * CELL, y: (y + 0.5) * CELL, c: def.color });
+      placeTower(room, m.type, x, y, cost);
+      break;
+    }
+
+    /* Bucket fill: spread outwards from the clicked tile, dropping one of these
+       on every tile that will take one, until the gold runs out. */
+    case 'fill': {
+      if (!isMM) break;
+      const def = BUILD[m.type];
+      if (!def || !isInt(m.x, 0, room.set.gw - 1) || !isInt(m.y, 0, room.set.gh - 1)) break;
+      const cost = buildCost(room, m.type);
+      if (room.gold < cost) { note(p, 'Not enough gold (' + cost + ' needed).', 'warn'); break; }
+      const w = room.set.gw, h = room.set.gh;
+      const seen = new Uint8Array(w * h);
+      const queue = [[m.x, m.y]];
+      seen[m.y * w + m.x] = 1;
+      let placed = 0, spent = 0, head = 0;
+      while (head < queue.length && room.gold >= cost && placed < 600) {
+        const [x, y] = queue[head++];
+        if (canPlace(room, m.type, x, y)) {
+          placeTower(room, m.type, x, y, cost, placed >= 50);
+          placed++; spent += cost;
+        }
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (!inBounds(room, nx, ny) || seen[ny * w + nx]) continue;
+          seen[ny * w + nx] = 1;
+          queue.push([nx, ny]);
+        }
+      }
+      note(p, placed ? 'Filled ' + placed + ' ' + def.name + (placed === 1 ? '' : 's') + ' for ' + spent + ' gold.'
+                     : 'Nowhere to put a ' + def.name + ' from there.', placed ? 'good' : 'warn');
+      break;
+    }
+
+    /* Mass upgrade: one track on every building of a type, cheapest first, with
+       the whole bill added up and paid in one go. */
+    case 'massUp': {
+      if (!isMM) break;
+      const def = BUILD[m.type];
+      if (!def || !def.tracks.includes(m.track)) break;
+      const area = cleanArea(m.area);
+      const list = [...room.towers.values()].filter(tw => tw.type === m.type && inArea(area, tw));
+      list.sort((a, b) => trackCost(room, a) - trackCost(room, b));
+      let n = 0, spent = 0;
+      for (const tw of list) {
+        const c = trackCost(room, tw);
+        if (room.gold < c) break;
+        const was = twForm(tw);
+        room.gold -= c; tw.spent += c; tw.up[m.track]++;
+        spent += c; n++;
+        if (twForm(tw) > was) {
+          ev(room, { k: 'morph', x: tw.x, y: tw.y, c: def.color, f: twForm(tw),
+            n: RULES.formName(def, tw.up) });
+        } else if (n <= 40) {
+          ev(room, { k: 'levelup', x: tw.x, y: tw.y, c: def.color, tower: 1 });
+        }
+      }
+      if (n) {
+        room.towersDirty = true;
+        note(p, TRACKS[m.track].name + ' +1 on ' + n + ' ' + def.name +
+          (n === 1 ? '' : 's') + ' for ' + spent + ' gold.', 'good');
+      } else {
+        note(p, list.length ? 'Not enough gold for that.' : 'No ' + def.name + ' to upgrade there.', 'warn');
+      }
       break;
     }
 
@@ -1208,10 +1298,14 @@ function onMessage(ws, raw) {
 
     case 'clearTowers': {
       if (!isMM) break;
-      let refund = 0;
-      for (const tw of room.towers.values()) refund += tw.spent;
-      room.gold += refund; room.towers.clear(); room.towersDirty = true;
-      note(p, 'All towers sold for the full ' + refund + ' gold.');
+      const area = cleanArea(m.area);
+      let refund = 0, n = 0;
+      for (const [key, tw] of [...room.towers]) {
+        if (!inArea(area, tw)) continue;
+        refund += tw.spent; room.towers.delete(key); n++;
+      }
+      room.gold += refund; room.towersDirty = true;
+      note(p, n + ' sold for the full ' + refund + ' gold.');
       break;
     }
 
