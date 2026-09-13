@@ -5,60 +5,96 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Track Master</title>
 <style>
-  :root { --bg:#0b1020; --panel:#141a2e; --panel2:#1b2340; --line:#2a3357; --text:#e6e9f5; --muted:#8f98bd;
-          --gold:#fbbf24; --good:#4ade80; --warn:#f87171; --accent:#7dd3fc; }
+  :root { --bg:#080c18; --panel:#121829; --panel2:#1a2138; --line:#28304f; --text:#e6e9f5; --muted:#8d96bd;
+          --gold:#fbbf24; --good:#4ade80; --warn:#f87171; --accent:#7dd3fc; --mm:#f87171; --run:#4ade80; }
   * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, Segoe UI, Roboto, sans-serif; overflow:hidden; }
-  button { font:inherit; color:inherit; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  button:disabled { opacity:.45; cursor:default; border-color:var(--line); }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font:14px/1.4 system-ui, Segoe UI, Roboto, sans-serif; overflow:hidden; }
+  button { font:inherit; color:inherit; background:var(--panel2); border:1px solid var(--line);
+           border-radius:6px; padding:6px 10px; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:default; }
   button.sel { background:#274064; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
-  button.big { padding:10px 14px; font-weight:600; }
-  input { font:inherit; color:inherit; background:#0f1428; border:1px solid var(--line); border-radius:6px; padding:8px 10px; width:100%; }
-  h1 { margin:0 0 6px; font-size:28px; letter-spacing:1px; }
-  h3 { margin:14px 0 6px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
-  .muted { color:var(--muted); }
-  .gold { color:var(--gold); font-weight:700; }
-  .good { color:var(--good); }
-  .warn { color:var(--warn); }
+  button.big { padding:10px 14px; font-weight:600; width:100%; }
+  input[type=text] { font:inherit; color:inherit; background:#0c1020; border:1px solid var(--line);
+                     border-radius:6px; padding:8px 10px; width:100%; }
+  input[type=range] { width:100%; padding:0; background:transparent; border:none; accent-color:var(--accent);
+                      cursor:pointer; height:18px; }
+  h1 { margin:0 0 6px; font-size:30px; letter-spacing:2px; }
+  h3 { margin:14px 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted);
+       border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .muted { color:var(--muted); } .gold { color:var(--gold); font-weight:700; }
+  .good { color:var(--good); } .warn { color:var(--warn); }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; line-height:1.5; }
+  .kbd { display:inline-block; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px;
+         padding:0 5px; font-size:11px; background:#0c1020; }
+  .sw { width:11px; height:11px; border-radius:50%; flex:none; display:inline-block; }
 
-  #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:radial-gradient(circle at 30% 20%, #1b2a4d, var(--bg) 60%); z-index:10; }
-  #lobby .card { width:420px; max-width:94vw; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; }
-  #lobby .row { display:flex; gap:8px; margin-top:10px; }
-  #lobby label { display:block; margin-top:12px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; }
-  #lobby .roles { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+  /* ---------------------------------------------------------------- lobby */
+  #lobby { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:20;
+           background:radial-gradient(circle at 30% 15%, #1d2c52, var(--bg) 65%); overflow-y:auto; }
+  #lobby .card { width:440px; max-width:94vw; background:var(--panel); border:1px solid var(--line);
+                 border-radius:14px; padding:24px; margin:20px; }
+  #lobby label { display:block; margin-top:12px; font-size:11px; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:1px; }
+  #lobby .roles { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:18px; }
   #lobby .roles button { padding:14px; text-align:left; }
   #lobby .roles b { display:block; font-size:16px; margin-bottom:4px; }
   #lobbyMsg { min-height:20px; margin-top:10px; }
 
+  /* ----------------------------------------------------------------- game */
   #game { display:none; height:100%; flex-direction:column; }
-  #top { display:flex; align-items:center; gap:14px; padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line); }
-  #top .brand { font-weight:800; letter-spacing:1px; }
-  #top .pill { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:13px; }
-  #top .grow { flex:1; }
+  #top { display:flex; align-items:center; gap:10px; padding:7px 12px; background:var(--panel);
+         border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .pill { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:13px; }
+  .grow { flex:1; }
   #main { flex:1; display:flex; min-height:0; }
-  #stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center; background:#070a14; min-width:0; }
-  canvas { image-rendering:auto; display:block; }
-  #side { width:320px; background:var(--panel); border-left:1px solid var(--line); overflow-y:auto; padding:12px; }
-  #side .grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-  #side .list button { display:flex; width:100%; justify-content:space-between; align-items:center; gap:8px; margin-bottom:5px; text-align:left; }
-  #side .list button small { color:var(--muted); display:block; font-size:11px; }
-  #side .list button .name { flex:1; }
-  .sw { width:12px; height:12px; border-radius:50%; flex:none; display:inline-block; }
-  #toasts { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; gap:6px; pointer-events:none; z-index:5; }
-  .toast { background:rgba(15,20,40,.92); border:1px solid var(--line); border-radius:8px; padding:6px 14px; font-size:13px; animation:fade 4s forwards; max-width:90vw; text-align:center; }
-  .toast.warn { border-color:var(--warn); } .toast.good { border-color:var(--good); }
-  @keyframes fade { 0%{opacity:0; transform:translateY(-6px)} 8%{opacity:1; transform:none} 80%{opacity:1} 100%{opacity:0} }
+  #stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center;
+           background:#05070f; min-width:0; overflow:hidden; }
+  canvas { display:block; }
+  #side { width:340px; flex:none; background:var(--panel); border-left:1px solid var(--line);
+          overflow-y:auto; padding:12px; }
+  #side .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  #side .list button { display:flex; width:100%; justify-content:space-between; align-items:center;
+                       gap:8px; margin-bottom:5px; text-align:left; }
+  #side .list small { color:var(--muted); display:block; font-size:11px; }
+  #side .list .name { flex:1; min-width:0; }
+
+  #vpWrap { display:flex; align-items:center; gap:8px; font-size:12px; }
+  #vpBar { width:190px; height:14px; border-radius:7px; overflow:hidden; border:1px solid var(--line);
+           background:#0c1020; display:flex; }
+  #vpBar i { display:block; height:100%; transition:width .25s; }
+  #vpRunBar { background:linear-gradient(90deg,#166534,var(--run)); }
+  #vpMMBar { background:linear-gradient(90deg,var(--mm),#7f1d1d); margin-left:auto; }
+
+  .bar { height:10px; background:#0c1020; border-radius:5px; overflow:hidden; border:1px solid var(--line); }
+  .bar i { display:block; height:100%; transition:width .12s; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   td, th { padding:3px 4px; text-align:left; border-bottom:1px solid var(--line); }
   th { color:var(--muted); font-weight:500; font-size:11px; text-transform:uppercase; }
-  .bar { height:10px; background:#0f1428; border-radius:5px; overflow:hidden; border:1px solid var(--line); }
-  .bar i { display:block; height:100%; background:var(--good); transition:width .1s; }
-  .kbd { display:inline-block; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; font-size:11px; background:#0f1428; }
-  #towerPanel { background:var(--panel2); border:1px solid var(--accent); border-radius:8px; padding:10px; margin-top:10px; }
-  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
-  input[type=range] { width:72px; padding:0; background:transparent; border:none; accent-color:var(--accent); vertical-align:middle; cursor:pointer; }
+
+  #setPanel { border:1px solid var(--line); border-radius:8px; padding:10px; margin-top:8px; background:#0f1425; }
+  .setRow { margin-bottom:9px; }
+  .setRow .top { display:flex; justify-content:space-between; font-size:12px; margin-bottom:1px; }
+  .setRow .val { color:var(--gold); font-weight:700; }
+  .setGroup { font-size:10px; text-transform:uppercase; letter-spacing:1.2px; color:var(--accent);
+              margin:10px 0 5px; }
+  .setGroup:first-child { margin-top:0; }
+
+  #towerPanel { background:var(--panel2); border:1px solid var(--accent); border-radius:8px;
+                padding:10px; margin-top:10px; }
+  #towerPanel .trk { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-top:5px; }
+  #towerPanel .trk button { flex:1; }
+
+  #toasts { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex;
+            flex-direction:column; gap:6px; pointer-events:none; z-index:5; align-items:center; }
+  .toast { background:rgba(10,14,28,.94); border:1px solid var(--line); border-radius:8px;
+           padding:6px 14px; font-size:13px; animation:fade 4s forwards; max-width:80vw; text-align:center; }
+  .toast.warn { border-color:var(--warn); } .toast.good { border-color:var(--good); }
+  @keyframes fade { 0%{opacity:0;transform:translateY(-6px)} 8%{opacity:1;transform:none}
+                    80%{opacity:1} 100%{opacity:0} }
   #soundWrap { display:flex; align-items:center; gap:6px; }
+  #soundWrap input[type=range] { width:70px; }
   #soundBtn { padding:3px 8px; font-size:14px; line-height:1; }
 </style>
 </head>
@@ -67,14 +103,19 @@
 <div id="lobby">
   <div class="card">
     <h1>TRACK MASTER</h1>
-    <div class="muted">One player is the <b>Mastermind</b>: builds the track, buys towers and traps. Everyone else is a <b>Runner</b>: get from START to END alive, earn upgrade points, come back stronger.</div>
+    <div class="muted">
+      One player is the <b>Mastermind</b>: they draw the track, build towers and traps, and score a
+      victory point every time a runner dies. Everyone else is a <b>Runner</b>: reach the END to score a
+      point for your team, bank upgrade points, and come back faster and meaner. First side to the
+      victory target wins the round.
+    </div>
     <label>Your name</label>
-    <input id="name" maxlength="14" placeholder="e.g. Vojta">
+    <input id="name" type="text" maxlength="14" placeholder="e.g. Vojta">
     <label>Room code <span class="muted" style="text-transform:none">(leave empty to create a new room)</span></label>
-    <input id="room" maxlength="8" placeholder="ABCD" style="text-transform:uppercase">
+    <input id="room" type="text" maxlength="8" placeholder="ABCD" style="text-transform:uppercase">
     <div class="roles">
-      <button id="joinMM"><b>Mastermind</b><span class="muted">Build the track, place towers, be evil.</span></button>
-      <button id="joinRun"><b>Runner</b><span class="muted">WASD to move, survive, upgrade.</span></button>
+      <button id="joinMM"><b>Mastermind</b><span class="muted">Build the track. Be the problem.</span></button>
+      <button id="joinRun"><b>Runner</b><span class="muted">WASD, survive, upgrade forever.</span></button>
     </div>
     <div id="lobbyMsg" class="warn"></div>
   </div>
@@ -82,10 +123,16 @@
 
 <div id="game">
   <div id="top">
-    <span class="brand">TRACK MASTER</span>
-    <span class="pill">Room <b id="roomCode"></b> <button id="copyLink" style="padding:1px 8px;margin-left:6px;font-size:12px">copy link</button></span>
+    <span style="font-weight:800;letter-spacing:1px">TRACK&nbsp;MASTER</span>
+    <span class="pill">Room <b id="roomCode"></b>
+      <button id="copyLink" style="padding:1px 8px;margin-left:6px;font-size:12px">copy link</button></span>
     <span class="pill" id="rolePill"></span>
     <span class="pill" id="phasePill"></span>
+    <span id="vpWrap" title="Victory points: runners vs the Mastermind">
+      <span class="good" id="vpRunTxt">0</span>
+      <span id="vpBar"><i id="vpRunBar"></i><i id="vpMMBar"></i></span>
+      <span class="warn" id="vpMMTxt">0</span>
+    </span>
     <span class="grow"></span>
     <span class="pill" id="statPill"></span>
     <span id="soundWrap">
@@ -103,626 +150,9 @@
   </div>
 </div>
 
+<script src="rules.js"></script>
 <script src="audio.js"></script>
-<script>
-'use strict';
-/* =============================================================== networking */
-const $ = id => document.getElementById(id);
-let ws = null, me = null, D = null;          /* D = defs from server */
-let grid = null, S = null;                   /* latest grid + state snapshot */
-let lastStateAt = 0;
-const disp = new Map();                      /* runner id -> smoothed position */
-const fx = [];                               /* visual effects */
-let toolKind = null, toolType = null;        /* mastermind tool */
-let selTower = null;                         /* selected tower key 'x,y' */
-let hover = null;                            /* hovered cell {x,y} */
-let painting = false, paintTile = null, lastPaint = null;
-const keys = {};
-/* Sound is driven by changes between snapshots, so the last one is kept. */
-let prevEdit = null, prevFrz = 0, prevDead = false, prevSlow = false, prevMeteors = 0;
-
-function connect(role) {
-  SFX.init();                                  /* a click: audio is allowed now */
-  const name = $('name').value.trim();
-  const room = $('room').value.trim().toUpperCase();
-  if (!name) { $('lobbyMsg').textContent = 'Type a name first.'; return; }
-  try { localStorage.setItem('tm_name', name); } catch (e) {}
-  $('lobbyMsg').textContent = 'Connecting...';
-  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-  ws = new WebSocket(url);
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', name, room, role }));
-  ws.onmessage = ev => onMsg(JSON.parse(ev.data));
-  ws.onclose = () => {
-    $('game').style.display = 'none'; $('lobby').style.display = 'flex';
-    $('lobbyMsg').textContent = me ? 'Connection lost. Join again to continue.' : 'Could not connect to the server.';
-    me = null; S = null;
-  };
-}
-function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
-
-function onMsg(m) {
-  if (m.t === 'w') {
-    me = { id: m.id, role: m.role, room: m.room, name: m.name }; D = m.defs;
-    $('lobby').style.display = 'none'; $('game').style.display = 'flex';
-    $('roomCode').textContent = m.room;
-    history.replaceState(null, '', '?room=' + m.room);
-    toolKind = null; selTower = null;
-    buildSide(); onResize();
-  } else if (m.t === 'g') {
-    grid = m;
-    if (S) S.edit = m.edit ? 1 : 0;
-    buildSide();
-  } else if (m.t === 's') {
-    const wasEdit = S ? S.edit : -1;
-    S = m; lastStateAt = performance.now();
-    for (const e of m.ev) { spawnFx(e); SFX.event(e, me.id); }
-    if (wasEdit !== m.edit && grid) grid.edit = !!m.edit;
-    soundFromState(m);
-    updateSide();
-  } else if (m.t === 'role') {
-    me.role = m.role; toolKind = null; selTower = null; buildSide();
-  } else if (m.t === 'msg') { toast(m.text, m.kind); SFX.play(m.kind === 'good' ? 'good' : m.kind === 'warn' ? 'warn' : 'info'); }
-}
-
-/* Things that are a state, not an event: going live, freezing, dying, getting
-   stuck in glue. Each one makes a noise the first frame it becomes true. */
-function soundFromState(m) {
-  if (prevEdit !== null && prevEdit !== m.edit) SFX.play(m.edit ? 'edit' : 'live');
-  prevEdit = m.edit;
-
-  if (m.frz > 0 && prevFrz <= 0) SFX.play('freeze');
-  else if (m.frz <= 0 && prevFrz > 0) SFX.play('unfreeze');
-  prevFrz = m.frz;
-
-  if (m.mt.length > prevMeteors) SFX.meteorIncoming(m.mt[m.mt.length - 1].x);
-  prevMeteors = m.mt.length;
-
-  const r = myRunner();
-  if (r) {
-    if (!r.d && prevDead) SFX.play('respawn');
-    prevDead = !!r.d;
-    if (r.sl && !prevSlow) SFX.play('slow', 0);
-    prevSlow = !!r.sl;
-    SFX.lowHp(!r.d && r.hp / r.mh < 0.3);
-  } else { prevDead = false; prevSlow = false; SFX.lowHp(false); }
-
-  /* Flamers hum only while at least one of them is actually burning. */
-  SFX.flame(!m.edit && m.tw.some(t => t.ty === 'flame' && t.f && !t.dis));
-}
-
-function toast(text, kind) {
-  const el = document.createElement('div');
-  el.className = 'toast ' + (kind || '');
-  el.textContent = text;
-  $('toasts').appendChild(el);
-  setTimeout(() => el.remove(), 4000);
-}
-
-/* ================================================================= sidebar */
-const side = $('side');
-function isMM() { return me && me.role === 'mm'; }
-function myRunner() { return S && S.r.find(r => r.id === me.id); }
-
-function buildSide() {
-  if (!me || !D) return;
-  side.innerHTML = '';
-  $('rolePill').textContent = isMM() ? 'You are the MASTERMIND' : 'You are a RUNNER (' + me.name + ')';
-  $('switchRole').textContent = isMM() ? 'Become a runner' : 'Take the Mastermind seat';
-  if (isMM()) buildMMSide(); else buildRunnerSide();
-  const sb = document.createElement('div');
-  sb.innerHTML = '<h3>Scoreboard</h3><table id="score"><tr><th>Runner</th><th>Fin</th><th>Deaths</th><th>Pts</th></tr></table>';
-  side.appendChild(sb);
-  updateSide();
-}
-
-function towerBtn(type) {
-  const t = D.TOWERS[type];
-  const b = document.createElement('button');
-  b.dataset.type = type;
-  b.innerHTML = `<span class="sw" style="background:${t.color}"></span><span class="name">${t.name}<small>${t.desc}</small></span><span class="gold">${t.cost}</span>`;
-  b.onclick = () => { setTool('tower', type); };
-  return b;
-}
-
-function buildMMSide() {
-  const edit = grid && grid.edit;
-  const w = document.createElement('div');
-  w.innerHTML = `
-    <button id="modeBtn" class="big" style="width:100%">${edit ? '▶ GO LIVE' : '✎ EDIT TRACK'}</button>
-    <div class="hint">${edit ? 'Runners wait at the start while you edit. Go live when the path connects Start to End.' : 'Towers can be placed any time. Editing the track pauses the runners.'}</div>
-    <h3>Track tools ${edit ? '' : '<span class="muted">(edit mode only)</span>'}</h3>
-    <div class="grid" id="trackTools">
-      <button data-tool="path" ${edit ? '' : 'disabled'}>Path brush</button>
-      <button data-tool="erase" ${edit ? '' : 'disabled'}>Eraser</button>
-      <button data-tool="start" ${edit ? '' : 'disabled'}>Set START</button>
-      <button data-tool="end" ${edit ? '' : 'disabled'}>Set END</button>
-      <button data-preset="snake" ${edit ? '' : 'disabled'}>Preset: Snake</button>
-      <button data-preset="zigzag" ${edit ? '' : 'disabled'}>Preset: Zigzag</button>
-      <button data-preset="blank" ${edit ? '' : 'disabled'} style="grid-column:1/3">Clear track</button>
-    </div>
-    <h3>Towers <span class="muted">(on empty ground)</span></h3>
-    <div class="list" id="towerList"></div>
-    <h3>Traps <span class="muted">(on the path)</span></h3>
-    <div class="list" id="trapList"></div>
-    <div id="towerPanel" style="display:none"></div>
-    <h3>Abilities</h3>
-    <div class="list" id="abList"></div>
-    <h3>Danger zone</h3>
-    <button id="clearTowers" style="width:100%">Sell every tower (full refund)</button>
-    <div class="hint">Hotkeys: <span class="kbd">1</span>-<span class="kbd">8</span> pick tower, <span class="kbd">U</span> upgrade selected, <span class="kbd">X</span> sell selected, <span class="kbd">Esc</span> deselect, click a tower to select it.</div>`;
-  side.appendChild(w);
-  $('modeBtn').onclick = () => send({ t: 'mode', edit: !(grid && grid.edit) });
-  for (const b of w.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
-  for (const b of w.querySelectorAll('[data-preset]')) b.onclick = () => send({ t: 'preset', name: b.dataset.preset });
-  for (const type in D.TOWERS) (D.TOWERS[type].onPath ? $('trapList') : $('towerList')).appendChild(towerBtn(type));
-  for (const a in D.MM_ABILITIES) {
-    const ab = D.MM_ABILITIES[a];
-    const b = document.createElement('button');
-    b.dataset.ab = a;
-    b.innerHTML = `<span class="name">${ab.name}<small>${ab.desc}</small></span><span class="gold">${ab.cost}</span>`;
-    b.onclick = () => { if (a === 'meteor') setTool('meteor'); else send({ t: 'ability', a }); };
-    $('abList').appendChild(b);
-  }
-  $('clearTowers').onclick = () => { if (confirm('Sell every tower?')) send({ t: 'clearTowers' }); };
-}
-
-function buildRunnerSide() {
-  const w = document.createElement('div');
-  w.innerHTML = `
-    <div style="display:flex;justify-content:space-between"><b>HP</b><span id="hpTxt"></span></div>
-    <div class="bar"><i id="hpBar"></i></div>
-    <div style="margin-top:8px">Upgrade points: <span class="gold" id="ptsTxt">0</span></div>
-    <div class="hint">+${D.POINTS_PER_FINISH} per finish, +${D.POINTS_PER_DEATH} per death (pity points).</div>
-    <h3>Upgrades</h3>
-    <div class="list" id="upList"></div>
-    <h3>Abilities</h3>
-    <div id="abStatus" class="muted"></div>
-    <h3>Controls</h3>
-    <div class="hint"><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> or arrows to move. <span class="kbd">Space</span> dash, <span class="kbd">E</span> EMP, <span class="kbd">Q</span> ghost (after buying them).</div>`;
-  side.appendChild(w);
-  for (const k in D.UPGRADES) {
-    const u = D.UPGRADES[k];
-    const b = document.createElement('button');
-    b.dataset.up = k;
-    b.innerHTML = `<span class="name">${u.name} <span class="lv muted"></span><small>${u.desc}</small></span><span class="gold cost"></span>`;
-    b.onclick = () => send({ t: 'upgrade', key: k });
-    $('upList').appendChild(b);
-  }
-}
-
-function updateSide() {
-  if (!me || !S) return;
-  $('phasePill').textContent = S.edit ? 'TRACK EDITING' : 'LIVE';
-  $('phasePill').style.color = S.edit ? 'var(--warn)' : 'var(--good)';
-  const sc = $('score');
-  if (sc) {
-    const rows = [...S.r].sort((a, b) => b.fin - a.fin || a.dth - b.dth);
-    sc.innerHTML = '<tr><th>Runner</th><th>Fin</th><th>Deaths</th><th>Pts</th></tr>' +
-      rows.map(r => `<tr><td>${r.id === me.id ? '<b>' + esc(r.n) + '</b>' : esc(r.n)}</td><td>${r.fin}</td><td>${r.dth}</td><td>${r.pt}</td></tr>`).join('') +
-      `<tr><td colspan="4" class="muted">Mastermind: ${S.mm ? esc(S.mm.n) : '<span class="warn">nobody (seat open)</span>'}</td></tr>`;
-  }
-  $('switchRole').style.display = (isMM() || !S.mm) ? '' : 'none';
-  if (isMM()) {
-    $('statPill').innerHTML = 'Gold <span class="gold">' + S.gold + '</span>';
-    for (const b of side.querySelectorAll('[data-type]')) {
-      b.disabled = S.gold < D.TOWERS[b.dataset.type].cost;
-      b.classList.toggle('sel', toolKind === 'tower' && toolType === b.dataset.type);
-    }
-    for (const b of side.querySelectorAll('[data-tool]')) b.classList.toggle('sel', toolKind === b.dataset.tool);
-    for (const b of side.querySelectorAll('[data-ab]')) {
-      const a = b.dataset.ab, cd = S.mmCd[a];
-      b.disabled = S.edit || cd > 0 || S.gold < D.MM_ABILITIES[a].cost;
-      b.classList.toggle('sel', a === 'meteor' && toolKind === 'meteor');
-      b.querySelector('.gold').textContent = cd > 0 ? (cd / 1000).toFixed(1) + 's' : D.MM_ABILITIES[a].cost;
-    }
-    const mb = $('modeBtn');
-    if (mb) mb.textContent = S.edit ? '▶ GO LIVE' : '✎ EDIT TRACK';
-    const panel = $('towerPanel');
-    const tw = selTower && S.tw.find(t => t.gx + ',' + t.gy === selTower);
-    if (!tw) { selTower = null; panel.style.display = 'none'; }
-    else {
-      const def = D.TOWERS[tw.ty];
-      const upCost = Math.round(def.cost * 0.8 * tw.lv);
-      panel.style.display = '';
-      panel.innerHTML = `<b><span class="sw" style="background:${def.color}"></span> ${def.name}</b> level ${tw.lv}${tw.dis ? ' <span class="warn">(EMP disabled)</span>' : ''}
-        <div class="hint">${statLine(def, tw.lv)}</div>
-        <div class="grid" style="margin-top:8px">
-          <button id="tupBtn" ${tw.lv >= D.TOWER_MAX_LV ? 'disabled' : ''}>${tw.lv >= D.TOWER_MAX_LV ? 'Maxed' : 'Upgrade (' + upCost + 'g)'}</button>
-          <button id="sellBtn">Sell (+${Math.round(tw.sp * 0.7)}g)</button>
-        </div>`;
-      $('tupBtn').onclick = () => send({ t: 'tup', x: tw.gx, y: tw.gy });
-      $('sellBtn').onclick = () => { send({ t: 'sell', x: tw.gx, y: tw.gy }); selTower = null; };
-    }
-  } else {
-    const r = myRunner();
-    if (!r) return;
-    $('statPill').innerHTML = 'Finishes <b>' + r.fin + '</b> &nbsp; Points <span class="gold">' + r.pt + '</span>';
-    $('hpTxt').textContent = Math.ceil(r.hp) + ' / ' + r.mh;
-    $('hpBar').style.width = (100 * r.hp / r.mh) + '%';
-    $('hpBar').style.background = r.hp / r.mh > 0.4 ? 'var(--good)' : 'var(--warn)';
-    $('ptsTxt').textContent = r.pt;
-    for (const b of side.querySelectorAll('[data-up]')) {
-      const k = b.dataset.up, lv = r.up[k], u = D.UPGRADES[k];
-      const cost = 1 + Math.floor(lv / 2);
-      b.querySelector('.lv').textContent = 'lv ' + lv + '/' + u.max;
-      b.querySelector('.cost').textContent = lv >= u.max ? 'MAX' : cost + ' pt';
-      b.disabled = lv >= u.max || r.pt < cost;
-    }
-    const ab = [];
-    ab.push(abLine('Dash', 'Space', r.up.dash, r.cd.dash));
-    ab.push(abLine('EMP', 'E', r.up.emp, r.cd.emp));
-    ab.push(abLine('Ghost', 'Q', r.up.ghost, r.cd.ghost));
-    $('abStatus').innerHTML = ab.join('<br>');
-  }
-}
-function abLine(name, key, lv, cd) {
-  if (lv < 1) return `<span class="kbd">${key}</span> ${name}: <span class="muted">locked</span>`;
-  return `<span class="kbd">${key}</span> ${name}: ` + (cd > 0 ? `<span class="warn">${(cd / 1000).toFixed(1)}s</span>` : '<span class="good">READY</span>');
-}
-function statLine(def, lv) {
-  const m = Math.pow(1.35, lv - 1), rm = Math.pow(1.1, lv - 1), out = [];
-  if (def.dmg) out.push('dmg ' + Math.round(def.dmg * m));
-  if (def.dps) out.push('dps ' + Math.round(def.dps * m));
-  if (def.range) out.push('range ' + Math.round(def.range * rm));
-  if (def.rate) out.push(def.rate + '/s');
-  if (def.slow) out.push('slow ' + Math.round(def.slow * 100) + '%');
-  if (def.splash) out.push('splash ' + def.splash);
-  if (def.chain) out.push('chains ' + def.chain);
-  return out.join(' · ');
-}
-function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
-
-function setTool(kind, type) {
-  if (toolKind === kind && toolType === (type || null)) { toolKind = null; toolType = null; }
-  else { toolKind = kind; toolType = type || null; }
-  if (toolKind) selTower = null;
-  updateSide();
-}
-
-/* ============================================================== input */
-const cv = $('cv'), ctx = cv.getContext('2d');
-let scale = 1;
-function onResize() {
-  const st = $('stage');
-  const s = Math.min(st.clientWidth / cv.width, st.clientHeight / cv.height, 1.6);
-  scale = s;
-  cv.style.width = Math.floor(cv.width * s) + 'px';
-  cv.style.height = Math.floor(cv.height * s) + 'px';
-}
-window.addEventListener('resize', onResize);
-
-function cellFromEvent(e) {
-  const r = cv.getBoundingClientRect();
-  const x = (e.clientX - r.left) / scale, y = (e.clientY - r.top) / scale;
-  return { px: x, py: y, x: Math.floor(x / D.CELL), y: Math.floor(y / D.CELL) };
-}
-function inGrid(c) { return c.x >= 0 && c.y >= 0 && c.x < D.GW && c.y < D.GH; }
-function towerAt(x, y) { return S && S.tw.find(t => t.gx === x && t.gy === y); }
-
-cv.addEventListener('contextmenu', e => e.preventDefault());
-cv.addEventListener('mousemove', e => {
-  if (!D) return;
-  hover = cellFromEvent(e);
-  if (painting && isMM() && inGrid(hover)) paintLine(hover);
-});
-/* Paint every cell between the previous mouse position and this one, so a fast
-   drag leaves no gaps in the track. */
-function paintLine(c) {
-  if (!lastPaint) lastPaint = c;
-  let x0 = lastPaint.x, y0 = lastPaint.y;
-  const x1 = c.x, y1 = c.y, dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
-  for (let guard = 0; guard < 200; guard++) {
-    send({ t: 'paint', x: x0, y: y0, tile: paintTile }); SFX.play('paint');
-    if (x0 === x1 && y0 === y1) break;
-    const e2 = 2 * err;
-    if (e2 > -dy) { err -= dy; x0 += sx; }
-    if (e2 < dx) { err += dx; y0 += sy; }
-  }
-  lastPaint = { x: x1, y: y1 };
-}
-cv.addEventListener('mouseleave', () => { hover = null; painting = false; lastPaint = null; });
-cv.addEventListener('mousedown', e => {
-  if (!D || !isMM() || !S) return;
-  const c = cellFromEvent(e);
-  if (!inGrid(c)) return;
-  if (e.button === 2) {                          /* right click: sell */
-    if (towerAt(c.x, c.y)) { send({ t: 'sell', x: c.x, y: c.y }); if (selTower === c.x + ',' + c.y) selTower = null; }
-    return;
-  }
-  const T = D.T;
-  if (toolKind === 'path' || toolKind === 'erase') {
-    if (!grid.edit) return;
-    painting = true; paintTile = toolKind === 'path' ? T.PATH : T.EMPTY; lastPaint = null;
-    paintLine(c);
-  } else if (toolKind === 'start' || toolKind === 'end') {
-    if (!grid.edit) return;
-    send({ t: 'paint', x: c.x, y: c.y, tile: toolKind === 'start' ? T.START : T.END });
-  } else if (toolKind === 'tower') {
-    if (towerAt(c.x, c.y)) { selTower = c.x + ',' + c.y; toolKind = null; toolType = null; updateSide(); return; }
-    send({ t: 'tower', type: toolType, x: c.x, y: c.y });
-  } else if (toolKind === 'meteor') {
-    send({ t: 'ability', a: 'meteor', x: c.px, y: c.py });
-    toolKind = null; updateSide();
-  } else {
-    selTower = towerAt(c.x, c.y) ? c.x + ',' + c.y : null;
-    updateSide();
-  }
-});
-cv.addEventListener('mouseup', e => { if (painting && isMM() && D) { const c = cellFromEvent(e); if (inGrid(c)) paintLine(c); } });
-window.addEventListener('mouseup', () => { painting = false; lastPaint = null; });
-
-function sendInput() {
-  const dx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-  const dy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
-  send({ t: 'input', dx, dy });
-}
-window.addEventListener('keydown', e => {
-  if (!me || e.target.tagName === 'INPUT') return;
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
-  if (e.repeat) return;
-  SFX.init();
-  if (e.code === 'KeyM') { toggleSound(); return; }
-  if (me.role === 'runner') {
-    if (e.code === 'Space') send({ t: 'act', a: 'dash' });
-    else if (e.code === 'KeyE') send({ t: 'act', a: 'emp' });
-    else if (e.code === 'KeyQ') send({ t: 'act', a: 'ghost' });
-    else { keys[e.code] = true; sendInput(); }
-  } else {
-    const types = Object.keys(D.TOWERS);
-    if (e.code.startsWith('Digit')) { const i = +e.code.slice(5) - 1; if (types[i]) setTool('tower', types[i]); }
-    else if (e.code === 'Escape') { toolKind = null; toolType = null; selTower = null; updateSide(); }
-    else if (e.code === 'KeyU' && selTower) { const [x, y] = selTower.split(',').map(Number); send({ t: 'tup', x, y }); }
-    else if (e.code === 'KeyX' && selTower) { const [x, y] = selTower.split(',').map(Number); send({ t: 'sell', x, y }); selTower = null; }
-  }
-});
-window.addEventListener('keyup', e => {
-  if (!me || me.role !== 'runner') return;
-  if (keys[e.code]) { keys[e.code] = false; sendInput(); }
-});
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; if (me && me.role === 'runner') sendInput(); });
-
-document.addEventListener('click', e => { SFX.init(); if (e.target.closest('button')) SFX.play('ui'); });
-$('joinMM').onclick = () => connect('mm');
-$('joinRun').onclick = () => connect('runner');
-$('switchRole').onclick = () => send({ t: 'role', role: isMM() ? 'runner' : 'mm' });
-$('copyLink').onclick = () => {
-  const link = location.origin + '/?room=' + me.room;
-  navigator.clipboard.writeText(link).then(() => toast('Link copied: ' + link, 'good'), () => prompt('Copy this link', link));
-};
-function updateSoundUI() {
-  $('soundBtn').innerHTML = SFX.isEnabled() && SFX.getVolume() > 0 ? '&#128266;' : '&#128263;';
-  $('soundBtn').classList.toggle('sel', SFX.isEnabled() && SFX.getVolume() > 0);
-  $('volSlider').value = Math.round(SFX.getVolume() * 100);
-}
-function toggleSound() { SFX.setEnabled(!SFX.isEnabled()); updateSoundUI(); if (SFX.isEnabled()) SFX.play('good'); }
-$('soundBtn').onclick = toggleSound;
-$('volSlider').oninput = e => { SFX.setVolume(e.target.value / 100); updateSoundUI(); };
-$('volSlider').onchange = () => SFX.play('info');
-updateSoundUI();
-
-$('room').value = new URLSearchParams(location.search).get('room') || '';
-try { $('name').value = localStorage.getItem('tm_name') || ''; } catch (e) {}
-$('name').addEventListener('keydown', e => { if (e.key === 'Enter') connect('runner'); });
-$('room').addEventListener('keydown', e => { if (e.key === 'Enter') connect('runner'); });
-
-/* ============================================================== effects */
-function spawnFx(e) {
-  const t0 = performance.now();
-  switch (e.k) {
-    case 'shot': fx.push({ ...e, t0, dur: e.z ? 180 : 110 }); break;
-    case 'boom': fx.push({ ...e, t0, dur: 450 }); for (let i = 0; i < 14; i++) particle(e.x, e.y, e.c, 3 + Math.random() * 4, 500); break;
-    case 'hit': fx.push({ k: 'num', x: e.x + (Math.random() * 16 - 8), y: e.y - 14, a: e.a, t0, dur: 700 }); break;
-    case 'die': fx.push({ ...e, t0, dur: 900 }); for (let i = 0; i < 20; i++) particle(e.x, e.y, '#f87171', 2 + Math.random() * 3, 800); break;
-    case 'fin': fx.push({ ...e, t0, dur: 1400 }); for (let i = 0; i < 30; i++) particle(e.x, e.y, ['#fbbf24', '#4ade80', '#7dd3fc', '#f9a8d4'][i % 4], 3 + Math.random() * 4, 1000); break;
-    case 'emp': fx.push({ ...e, t0, dur: 500 }); break;
-    case 'dash': fx.push({ ...e, t0, dur: 300 }); break;
-    case 'build': for (let i = 0; i < 10; i++) particle(e.x, e.y, '#fbbf24', 1.5 + Math.random() * 2, 500); break;
-  }
-}
-function particle(x, y, c, spd, dur) {
-  const a = Math.random() * Math.PI * 2;
-  fx.push({ k: 'p', x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, c, t0: performance.now(), dur });
-}
-
-/* ============================================================== drawing */
-const COLORS = ['#f472b6', '#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#fb923c', '#2dd4bf', '#f87171'];
-function runnerColor(id) { return COLORS[id % COLORS.length]; }
-let lastFrame = performance.now();
-
-function draw() {
-  requestAnimationFrame(draw);
-  const now = performance.now();
-  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now;
-  if (!D || !grid) return;
-  const C = D.CELL, T = D.T, W = cv.width, H = cv.height;
-
-  /* ground + tiles */
-  ctx.fillStyle = '#1a2b1f'; ctx.fillRect(0, 0, W, H);
-  for (let y = 0; y < D.GH; y++) for (let x = 0; x < D.GW; x++) {
-    const t = grid.tiles[y * D.GW + x];
-    if (t === T.EMPTY) { ctx.fillStyle = (x + y) % 2 ? '#1c2f22' : '#1f3426'; }
-    else if (t === T.PATH) ctx.fillStyle = (x + y) % 2 ? '#c9b48b' : '#d2bd94';
-    else if (t === T.START) ctx.fillStyle = '#4ade80';
-    else ctx.fillStyle = '#fbbf24';
-    ctx.fillRect(x * C, y * C, C, C);
-    if (t === T.START || t === T.END) {
-      ctx.fillStyle = '#0b1020'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText(t === T.START ? 'START' : 'END', x * C + C / 2, y * C + C / 2 + 4);
-    }
-  }
-  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = 0; x <= D.GW; x++) { ctx.moveTo(x * C + .5, 0); ctx.lineTo(x * C + .5, H); }
-  for (let y = 0; y <= D.GH; y++) { ctx.moveTo(0, y * C + .5); ctx.lineTo(W, y * C + .5); }
-  ctx.stroke();
-
-  if (!S) return;
-  const sNow = S.now;
-
-  /* towers */
-  for (const tw of S.tw) {
-    const def = D.TOWERS[tw.ty], cx = (tw.gx + .5) * C, cy = (tw.gy + .5) * C;
-    const key = tw.gx + ',' + tw.gy;
-    if (def.onPath) {
-      if (tw.ty === 'spikes') {
-        ctx.fillStyle = tw.dis ? '#555' : '#e5e7eb';
-        for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
-          const px = tw.gx * C + 8 + i * 12, py = tw.gy * C + 8 + j * 12;
-          ctx.beginPath(); ctx.moveTo(px - 4, py + 4); ctx.lineTo(px, py - 5); ctx.lineTo(px + 4, py + 4); ctx.fill();
-        }
-      } else {
-        ctx.fillStyle = tw.dis ? 'rgba(120,120,120,.6)' : 'rgba(163,230,53,.75)';
-        ctx.beginPath(); ctx.ellipse(cx, cy, 16, 13, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(cx + 9, cy - 8, 6, 5, 0, 0, Math.PI * 2); ctx.fill();
-      }
-    } else {
-      ctx.fillStyle = '#0f1428'; ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = tw.dis ? '#4b5563' : def.color; ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2); ctx.fill();
-      if (tw.ty === 'frost') {
-        ctx.strokeStyle = 'rgba(165,243,252,.25)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(cx, cy, def.range * Math.pow(1.1, tw.lv - 1), 0, Math.PI * 2); ctx.stroke();
-      } else if (tw.ty === 'flame') {
-        if (tw.f && !tw.dis) { ctx.fillStyle = 'rgba(251,113,133,.18)'; ctx.beginPath(); ctx.arc(cx, cy, def.range * Math.pow(1.1, tw.lv - 1), 0, Math.PI * 2); ctx.fill(); }
-      } else if (tw.aim !== undefined) {
-        ctx.strokeStyle = '#0f1428'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(tw.aim) * 16, cy + Math.sin(tw.aim) * 16); ctx.stroke();
-      }
-    }
-    /* level pips */
-    ctx.fillStyle = '#fbbf24';
-    for (let i = 1; i < tw.lv; i++) { ctx.beginPath(); ctx.arc(tw.gx * C + 6 + (i - 1) * 7, tw.gy * C + 6, 2.5, 0, Math.PI * 2); ctx.fill(); }
-    if (tw.dis) { ctx.fillStyle = '#facc15'; ctx.font = 'bold 14px system-ui'; ctx.textAlign = 'center'; ctx.fillText('⚡', cx, cy + 5); }
-    if (isMM() && (key === selTower || (hover && hover.x === tw.gx && hover.y === tw.gy)) && def.range) {
-      ctx.strokeStyle = key === selTower ? 'rgba(255,255,255,.7)' : 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(cx, cy, def.range * Math.pow(1.1, tw.lv - 1), 0, Math.PI * 2); ctx.stroke();
-      if (def.minRange) { ctx.beginPath(); ctx.arc(cx, cy, def.minRange, 0, Math.PI * 2); ctx.stroke(); }
-    }
-  }
-
-  /* meteors incoming */
-  for (const m of S.mt) {
-    const f = 1 - m.in / (D.MM_ABILITIES.meteor.delay * 1000);
-    ctx.strokeStyle = 'rgba(249,115,22,.9)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(m.x, m.y, D.MM_ABILITIES.meteor.radius * (1 - f * 0.6) + 4, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = 'rgba(249,115,22,.25)'; ctx.beginPath(); ctx.arc(m.x, m.y, D.MM_ABILITIES.meteor.radius, 0, Math.PI * 2); ctx.fill();
-  }
-
-  /* projectiles */
-  for (const p of S.pj) {
-    if (p.k === 'lob') { ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill(); }
-    ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y - (p.h || 0), p.k === 'lob' ? 5 : 3.5, 0, Math.PI * 2); ctx.fill();
-  }
-
-  /* runners */
-  const seen = new Set();
-  for (const r of S.r) {
-    seen.add(r.id);
-    let d = disp.get(r.id);
-    if (!d) { d = { x: r.x, y: r.y }; disp.set(r.id, d); }
-    const dist = Math.hypot(r.x - d.x, r.y - d.y);
-    if (dist > 140 || r.d) { d.x = r.x; d.y = r.y; }
-    else { const k = 1 - Math.exp(-dt * 18); d.x += (r.x - d.x) * k; d.y += (r.y - d.y) * k; }
-    const col = runnerColor(r.id), R = D.RUNNER_R;
-    if (r.d) {
-      ctx.strokeStyle = 'rgba(248,113,113,.7)'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(d.x - 8, d.y - 8); ctx.lineTo(d.x + 8, d.y + 8); ctx.moveTo(d.x + 8, d.y - 8); ctx.lineTo(d.x - 8, d.y + 8); ctx.stroke();
-      continue;
-    }
-    ctx.globalAlpha = r.gh ? 0.45 : 1;
-    if (r.gh) { ctx.shadowColor = '#fff'; ctx.shadowBlur = 16; }
-    ctx.fillStyle = '#0b1020'; ctx.beginPath(); ctx.arc(d.x, d.y, R + 2, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = r.sl ? '#93c5fd' : col; ctx.beginPath(); ctx.arc(d.x, d.y, R, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
-    /* eyes in facing direction */
-    ctx.fillStyle = '#0b1020';
-    ctx.beginPath(); ctx.arc(d.x + r.fx * 4 - r.fy * 4, d.y + r.fy * 4 + r.fx * 4, 2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(d.x + r.fx * 4 + r.fy * 4, d.y + r.fy * 4 - r.fx * 4, 2, 0, Math.PI * 2); ctx.fill();
-    ctx.globalAlpha = 1;
-    /* name + hp */
-    ctx.font = (r.id === me.id ? 'bold ' : '') + '11px system-ui'; ctx.textAlign = 'center';
-    ctx.fillStyle = '#000'; ctx.fillText(r.n, d.x + 1, d.y - 18 + 1);
-    ctx.fillStyle = r.id === me.id ? '#fff' : '#d1d5db'; ctx.fillText(r.n, d.x, d.y - 18);
-    ctx.fillStyle = '#0b1020'; ctx.fillRect(d.x - 14, d.y - 16, 28, 4);
-    ctx.fillStyle = r.hp / r.mh > .4 ? '#4ade80' : '#f87171'; ctx.fillRect(d.x - 14, d.y - 16, 28 * r.hp / r.mh, 4);
-    if (r.id === me.id) { ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(d.x, d.y, R + 5, 0, Math.PI * 2); ctx.stroke(); }
-  }
-  for (const id of disp.keys()) if (!seen.has(id)) disp.delete(id);
-
-  /* effects */
-  for (let i = fx.length - 1; i >= 0; i--) {
-    const e = fx[i], f = (now - e.t0) / e.dur;
-    if (f >= 1) { fx.splice(i, 1); continue; }
-    if (e.k === 'shot') {
-      ctx.strokeStyle = e.c; ctx.lineWidth = e.w; ctx.globalAlpha = 1 - f;
-      ctx.beginPath(); ctx.moveTo(e.x1, e.y1);
-      if (e.z) { const segs = 5; for (let s = 1; s <= segs; s++) { const t = s / segs; ctx.lineTo(e.x1 + (e.x2 - e.x1) * t + (s < segs ? (Math.random() * 14 - 7) : 0), e.y1 + (e.y2 - e.y1) * t + (s < segs ? (Math.random() * 14 - 7) : 0)); } }
-      else ctx.lineTo(e.x2, e.y2);
-      ctx.stroke(); ctx.globalAlpha = 1;
-    } else if (e.k === 'boom') {
-      ctx.strokeStyle = e.c; ctx.lineWidth = 4 * (1 - f); ctx.globalAlpha = 1 - f;
-      ctx.beginPath(); ctx.arc(e.x, e.y, e.r * (0.3 + 0.7 * f), 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = e.c; ctx.globalAlpha = 0.3 * (1 - f); ctx.beginPath(); ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
-    } else if (e.k === 'emp') {
-      ctx.strokeStyle = '#facc15'; ctx.lineWidth = 3; ctx.globalAlpha = 1 - f;
-      ctx.beginPath(); ctx.arc(e.x, e.y, e.r * f, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
-    } else if (e.k === 'num') {
-      ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'center'; ctx.globalAlpha = 1 - f;
-      ctx.fillStyle = '#000'; ctx.fillText('-' + e.a, e.x + 1, e.y - f * 24 + 1);
-      ctx.fillStyle = '#fca5a5'; ctx.fillText('-' + e.a, e.x, e.y - f * 24); ctx.globalAlpha = 1;
-    } else if (e.k === 'p') {
-      e.x += e.vx; e.y += e.vy; e.vx *= 0.94; e.vy *= 0.94;
-      ctx.fillStyle = e.c; ctx.globalAlpha = 1 - f; ctx.beginPath(); ctx.arc(e.x, e.y, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
-    } else if (e.k === 'fin' || e.k === 'die') {
-      ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.globalAlpha = 1 - f;
-      const txt = e.k === 'fin' ? e.n + ' FINISHED!' : e.n + ' died';
-      ctx.fillStyle = '#000'; ctx.fillText(txt, e.x + 1, e.y - 30 - f * 20 + 1);
-      ctx.fillStyle = e.k === 'fin' ? '#fbbf24' : '#f87171'; ctx.fillText(txt, e.x, e.y - 30 - f * 20); ctx.globalAlpha = 1;
-    } else if (e.k === 'dash') {
-      ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; ctx.globalAlpha = 1 - f;
-      ctx.beginPath(); ctx.arc(e.x, e.y, 12 + f * 14, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
-    }
-  }
-
-  /* hover / placement preview for the mastermind */
-  if (isMM() && hover && inGrid(hover)) {
-    const hx = hover.x * C, hy = hover.y * C;
-    if (toolKind === 'tower') {
-      const def = D.TOWERS[toolType], t = grid.tiles[hover.y * D.GW + hover.x];
-      const ok = !towerAt(hover.x, hover.y) && (def.onPath ? t === T.PATH : t === T.EMPTY);
-      ctx.fillStyle = ok ? 'rgba(125,211,252,.35)' : 'rgba(248,113,113,.4)'; ctx.fillRect(hx, hy, C, C);
-      if (def.range) { ctx.strokeStyle = ok ? 'rgba(255,255,255,.5)' : 'rgba(248,113,113,.5)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(hx + C / 2, hy + C / 2, def.range, 0, Math.PI * 2); ctx.stroke();
-        if (def.minRange) { ctx.beginPath(); ctx.arc(hx + C / 2, hy + C / 2, def.minRange, 0, Math.PI * 2); ctx.stroke(); } }
-    } else if (toolKind === 'meteor') {
-      ctx.strokeStyle = 'rgba(249,115,22,.9)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(hover.px, hover.py, D.MM_ABILITIES.meteor.radius, 0, Math.PI * 2); ctx.stroke();
-    } else if (toolKind) {
-      ctx.fillStyle = grid.edit ? 'rgba(255,255,255,.25)' : 'rgba(248,113,113,.3)'; ctx.fillRect(hx, hy, C, C);
-    } else {
-      ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 1; ctx.strokeRect(hx + .5, hy + .5, C - 1, C - 1);
-    }
-  }
-
-  /* overlays */
-  if (S.frz > 0) {
-    ctx.fillStyle = 'rgba(147,197,253,.18)'; ctx.fillRect(0, 0, W, H);
-    banner('FROZEN ' + (S.frz / 1000).toFixed(1) + 's', '#bfdbfe');
-  }
-  if (S.edit) banner(isMM() ? 'EDITING THE TRACK — press GO LIVE when done' : 'The Mastermind is rebuilding the track...', '#fca5a5');
-  else if (!S.mm) banner('No Mastermind! Someone take the seat.', '#fde68a');
-  if (me.role === 'runner') {
-    const r = myRunner();
-    if (r && r.d) banner('You died. Respawning...', '#fca5a5');
-  }
-  if (performance.now() - lastStateAt > 2000) banner('Waiting for server...', '#fde68a');
-}
-function banner(text, color) {
-  ctx.font = 'bold 20px system-ui'; ctx.textAlign = 'center';
-  const w = ctx.measureText(text).width + 30;
-  ctx.fillStyle = 'rgba(11,16,32,.8)'; ctx.fillRect(cv.width / 2 - w / 2, cv.height - 50, w, 34);
-  ctx.fillStyle = color; ctx.fillText(text, cv.width / 2, cv.height - 26);
-}
-requestAnimationFrame(draw);
-</script>
+<script src="vfx.js"></script>
+<script src="game.js"></script>
 </body>
 </html>

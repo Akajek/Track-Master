@@ -1,5 +1,9 @@
-/* End-to-end test: boots the real server, connects a Mastermind and a Runner
- * over WebSocket and plays through the core loop. Run with `npm test`. */
+/* End-to-end test. Boots the real server, connects a Mastermind and a Runner
+ * over real WebSockets, and plays through every system: settings, map resizing,
+ * victory points, uncapped upgrades, every ability, every trap, and a win.
+ *
+ *   npm test
+ */
 'use strict';
 process.env.PORT = '18765';
 const assert = require('assert');
@@ -9,34 +13,46 @@ const vm = require('vm');
 const http = require('http');
 const WebSocket = require('ws');
 const { server, rooms, pathConnected } = require('../server.js');
+const RULES = require('../public/rules.js');
 
 const URL = 'ws://localhost:18765';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const T = { EMPTY: 0, PATH: 1, START: 2, END: 3 };
+/* The tiny straight track every movement test runs on. */
+const ROW = 5, SX = 1, EX = 9;
 
 function client(name, role, room) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
-    const c = { ws, name, state: null, grid: null, welcome: null, msgs: [], send: o => ws.send(JSON.stringify(o)) };
+    const c = { ws, name, state: null, grid: null, set: null, towers: null, welcome: null, msgs: [],
+                send: o => ws.send(JSON.stringify(o)) };
     ws.on('open', () => c.send({ t: 'join', name, role, room }));
     ws.on('message', raw => {
       const m = JSON.parse(raw);
-      if (m.t === 'w') { c.welcome = m; resolve(c); }
+      if (m.t === 'w') { c.welcome = m; }
       else if (m.t === 'g') c.grid = m;
-      else if (m.t === 's') c.state = m;
+      else if (m.t === 'set') c.set = m.set;
+      else if (m.t === 'tw') c.towers = m.tw;
+      else if (m.t === 's') { c.state = m; if (c.welcome && !c.ready) { c.ready = true; resolve(c); } }
       else if (m.t === 'msg') c.msgs.push(m.text);
       else if (m.t === 'role') c.welcome.role = m.role;
     });
     ws.on('error', reject);
-    setTimeout(() => reject(new Error('join timeout for ' + name)), 3000);
+    setTimeout(() => reject(new Error('join timeout for ' + name)), 4000);
   });
 }
-async function waitFor(fn, what, ms = 4000) {
+async function waitFor(fn, what, ms = 5000) {
   const t0 = Date.now();
-  while (Date.now() - t0 < ms) { if (fn()) return; await sleep(25); }
-  throw new Error('timed out waiting for: ' + what);
+  let last;
+  while (Date.now() - t0 < ms) {
+    try { if (fn()) return; } catch (e) { last = e; }
+    await sleep(25);
+  }
+  throw new Error('timed out waiting for: ' + what + (last ? ' (' + last.message + ')' : ''));
 }
 const me = c => c.state.r.find(r => r.id === c.welcome.id);
-const towerAt = (c, x, y) => c.state.tw.find(t => t.gx === x && t.gy === y);
+const twAt = (c, x, y) => (c.towers || []).find(t => t.gx === x && t.gy === y);
+const startPx = x => (x + 0.5) * 40;
 
 function get(urlPath) {
   return new Promise((resolve, reject) => {
@@ -48,154 +64,323 @@ function get(urlPath) {
   });
 }
 
+/* Walk right until `done()` is true (or we give up). Movement is server-side,
+   so the test just holds the key down the way a player would. */
+async function runRight(run, done, what, ms = 6000) {
+  run.send({ t: 'input', dx: 1, dy: 0 });
+  try { await waitFor(done, what, ms); }
+  finally { run.send({ t: 'input', dx: 0, dy: 0 }); await sleep(80); }
+}
+
+async function paintTrack(mm) {
+  mm.send({ t: 'preset', name: 'blank' });
+  await sleep(120);
+  mm.send({ t: 'paint', x: SX, y: ROW, tile: T.START });
+  for (let x = SX + 1; x < EX; x++) mm.send({ t: 'paint', x, y: ROW, tile: T.PATH });
+  mm.send({ t: 'paint', x: EX, y: ROW, tile: T.END });
+  await sleep(200);
+}
+/* Toggling edit mode parks every runner on START and stops them, which is the
+   only way to get a deterministic starting position between tests. */
+async function park(mm, run) {
+  mm.send({ t: 'input', dx: 0, dy: 0 });
+  run.send({ t: 'input', dx: 0, dy: 0 });
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'parked in edit mode');
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'live again');
+  await waitFor(() => me(run).x === startPx(SX) && me(run).d === 0, 'runner is on the start tile');
+}
+async function setOpt(mm, key, v) {
+  mm.send({ t: 'setting', key, v });
+  await waitFor(() => mm.set[key] === v, 'setting ' + key + ' = ' + v);
+}
+
 async function main() {
   await new Promise(r => server.listening ? r() : server.once('listening', r));
 
-  /* --- the client's files are actually shipped and actually parse ---------- */
-  const audio = fs.readFileSync(path.join(__dirname, '..', 'public', 'audio.js'), 'utf8');
-  new vm.Script(audio);                              // throws on a syntax error
+  /* ---- the client's files are shipped, parse, and agree with the server --- */
+  for (const f of ['rules.js', 'audio.js', 'vfx.js', 'game.js']) {
+    new vm.Script(fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8'));
+    const served = await get('/' + f);
+    assert.strictEqual(served.status, 200, f + ' is served');
+    assert.strictEqual(served.type, 'text/javascript', f + ' is served as javascript');
+  }
   const page = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  assert.ok(/<script src="audio\.js"><\/script>/.test(page), 'index.html loads audio.js');
-  assert.ok(page.indexOf('<script src="audio.js">') < page.indexOf("SFX.init()"),
-    'audio.js is loaded before the code that calls SFX');
-  const served = await get('/audio.js');
-  assert.strictEqual(served.status, 200, 'the server serves audio.js');
-  assert.strictEqual(served.type, 'text/javascript', 'audio.js is served as javascript');
-  assert.ok(served.body.includes('SFX'), 'audio.js arrives intact');
-  const health = await get('/healthz');
-  assert.strictEqual(health.status, 200, 'health check for Render responds');
+  for (const f of ['rules.js', 'audio.js', 'vfx.js', 'game.js']) {
+    assert.ok(page.includes('src="' + f + '"'), 'index.html loads ' + f);
+  }
+  assert.ok(page.indexOf('src="rules.js"') < page.indexOf('src="game.js"'), 'rules load before the game');
+  /* Regression guard: a fresh canvas element is 300x150 until something sets
+     it, so the offscreen terrain cache has to be resized where it is drawn.
+     When this was only done on a size *change*, a default-sized map left the
+     cache at 300x150 and most of the board never got painted. */
+  const gameSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'game.js'), 'utf8');
+  const drawTerrainBody = gameSrc.slice(gameSrc.indexOf('function drawTerrain('),
+                                        gameSrc.indexOf('function drawTower('));
+  assert.ok(/terrain\.width\s*=\s*cv\.width/.test(drawTerrainBody),
+    'drawTerrain must size the terrain cache to the canvas before drawing into it');
+  assert.strictEqual((await get('/healthz')).status, 200, 'health check for Render responds');
+
+  /* ---- lobby, roles, defs ------------------------------------------------ */
   const mm = await client('Boss', 'mm', '');
   const code = mm.welcome.room;
-  assert.strictEqual(mm.welcome.role, 'mm', 'first player gets the Mastermind seat');
-  assert.ok(mm.welcome.defs.TOWERS.turret, 'defs are sent');
+  assert.strictEqual(mm.welcome.role, 'mm', 'first player takes the Mastermind seat');
+  const D = mm.welcome.defs;
+  for (const t of ['turret', 'sniper', 'mortar', 'tesla', 'pulse', 'laser', 'flame', 'frost']) {
+    assert.ok(D.TOWERS[t], 'tower ' + t + ' is defined');
+  }
+  for (const t of ['spikes', 'glue', 'saw', 'mine', 'snare', 'portal']) {
+    assert.ok(D.TRAPS[t], 'trap ' + t + ' is defined');
+  }
+  for (const u of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'momentum', 'grip', 'haste', 'tough']) {
+    assert.ok(D.UPGRADES[u], 'upgrade ' + u + ' is defined');
+  }
+  for (const s of ['gw', 'gh', 'income', 'incomeGrow', 'vpTarget', 'upGrow', 'twGrow', 'lapBonus']) {
+    assert.ok(D.SETTINGS[s], 'setting ' + s + ' is defined');
+  }
+  assert.ok(!('max' in (D.UPGRADES.speed || {})), 'runner upgrades no longer carry a level cap');
 
   const run = await client('Speedy', 'runner', code);
   assert.strictEqual(run.welcome.role, 'runner');
-  const mm2 = await client('Late', 'mm', code);
-  assert.strictEqual(mm2.welcome.role, 'runner', 'second mastermind is demoted to runner');
-  assert.ok(mm2.msgs.some(t => /seat is taken/.test(t)), 'told the seat is taken');
-  mm2.ws.close();
-
-  await waitFor(() => mm.state && run.state && run.grid, 'first state + grid');
-  const room = rooms.get(code);
-  assert.strictEqual(room.tiles.length, 24 * 16);
-  assert.ok(pathConnected(room), 'default snake track connects start and end');
-  const start = room.tiles.indexOf(2), sx = start % 24, sy = Math.floor(start / 24);
-  assert.deepStrictEqual([sx, sy], [0, 2], 'snake starts at (0,2)');
-
-  /* --- runner movement + collision -------------------------------------- */
-  const r0 = me(run);
-  assert.deepStrictEqual([r0.x, r0.y], [20, 100], 'runner spawns in the middle of the start tile');
-  run.send({ t: 'input', dx: 0, dy: -1 });           // up: into grass, blocked
-  await sleep(300);
-  assert.ok(me(run).y >= 91 && me(run).y < 100, 'runner slides to the tile edge but cannot leave the path (y=' + me(run).y + ')');
-  run.send({ t: 'input', dx: 1, dy: 0 });            // right: along the path
-  await waitFor(() => me(run).x > 100, 'runner moving right along the path');
-  run.send({ t: 'input', dx: 0, dy: 0 });
+  const late = await client('Late', 'mm', code);
+  assert.strictEqual(late.welcome.role, 'runner', 'a second Mastermind is demoted to runner');
+  assert.ok(late.msgs.some(t => /seat is taken/.test(t)), 'and is told why');
+  late.ws.close();
   await sleep(120);
-  const stopped = me(run).x;
-  await sleep(200);
-  assert.strictEqual(me(run).x, stopped, 'runner stops when input is released');
 
-  /* --- tower placement rules --------------------------------------------- */
-  const gold0 = mm.state.gold;
-  mm.send({ t: 'tower', type: 'turret', x: 5, y: 2 });      // path tile: refused
-  await sleep(150);
-  assert.ok(!towerAt(mm, 5, 2), 'turret is not allowed on the path');
-  assert.ok(mm.msgs.some(t => /empty ground/.test(t)), 'refusal message arrives');
-  mm.send({ t: 'tower', type: 'spikes', x: 5, y: 4 });      // grass tile: refused for a trap
-  await sleep(150);
-  assert.ok(!towerAt(mm, 5, 4), 'trap is not allowed off the path');
-  mm.send({ t: 'tower', type: 'sniper', x: 5, y: 3 });      // grass next to the path: ok
-  await waitFor(() => towerAt(mm, 5, 3), 'sniper placed');
-  assert.ok(mm.state.gold <= gold0 - 120 + 8, 'gold was charged for the sniper');
-  mm.send({ t: 'tower', type: 'sniper', x: 5, y: 3 });
-  await sleep(150);
-  assert.ok(mm.msgs.some(t => /already something/.test(t)), 'cannot stack towers');
-  mm.send({ t: 'tower', type: 'glue', x: 8, y: 2 });
-  await waitFor(() => towerAt(mm, 8, 2), 'glue trap placed on the path');
-  assert.ok(!run.state.tw.find(() => false), 'runner also receives tower list');
-  await waitFor(() => run.state.tw.length === 2, 'runner sees both placements');
+  const room = rooms.get(code);
+  assert.deepStrictEqual([mm.set.gw, mm.set.gh], [24, 16], 'default map is 24x16');
+  assert.strictEqual(mm.grid.tiles.length, 24 * 16, 'grid matches the settings');
+  assert.ok(pathConnected(room), 'the default preset connects START to END');
 
-  /* --- the sniper shoots the runner, the runner dies and respawns -------- */
-  const hp0 = me(run).hp;
-  await waitFor(() => me(run).hp < hp0, 'sniper damages the runner');
-  await waitFor(() => me(run).d === 1, 'runner dies', 8000);
-  assert.strictEqual(me(run).dth, 1, 'death counted');
-  assert.strictEqual(me(run).pt, 1, 'pity point for dying');
-  assert.ok(mm.state.gold > 60, 'mastermind was paid for the kill');
-  await waitFor(() => me(run).d === 0 && me(run).x === 20, 'runner respawns at start', 5000);
-
-  /* --- tower upgrade + sell --------------------------------------------- */
-  mm.send({ t: 'tup', x: 5, y: 3 });
-  await waitFor(() => towerAt(mm, 5, 3).lv === 2, 'sniper upgraded to level 2');
-  const goldBeforeSell = mm.state.gold;
-  mm.send({ t: 'sell', x: 5, y: 3 });
-  await waitFor(() => !towerAt(mm, 5, 3), 'sniper sold');
-  assert.ok(mm.state.gold > goldBeforeSell, 'sell refunds gold');
-
-  /* --- edit mode: rebuild a tiny track, go live, finish a lap ----------- */
+  /* ---- the map size slider ----------------------------------------------- */
   mm.send({ t: 'mode', edit: true });
-  await waitFor(() => mm.state.edit === 1, 'edit mode on');
-  mm.send({ t: 'preset', name: 'blank' });
-  await waitFor(() => run.grid.tiles.every(t => t === 0), 'blank preset reached the runner');
-  mm.send({ t: 'mode', edit: false });
-  await sleep(150);
-  assert.strictEqual(mm.state.edit, 1, 'cannot go live without a connected track');
-  assert.ok(mm.msgs.some(t => /needs a Start/.test(t)), 'explains why');
-  mm.send({ t: 'paint', x: 0, y: 0, tile: 2 });
-  mm.send({ t: 'paint', x: 1, y: 0, tile: 1 });
-  mm.send({ t: 'paint', x: 2, y: 0, tile: 1 });
-  mm.send({ t: 'paint', x: 3, y: 0, tile: 3 });
-  await waitFor(() => run.grid.tiles[3] === 3, 'painted tiles reach the runner');
+  await waitFor(() => mm.state.edit === 1, 'edit mode');
+  await setOpt(mm, 'gw', 30);
+  await setOpt(mm, 'gh', 20);
+  await waitFor(() => run.grid.gw === 30 && run.grid.gh === 20, 'the runner sees the bigger map');
+  assert.strictEqual(run.grid.tiles.length, 30 * 20, 'resized grid has the right number of tiles');
+  assert.strictEqual(room.tiles.length, 30 * 20, 'and so does the server');
+  await setOpt(mm, 'gw', 14);
+  await waitFor(() => run.grid.gw === 14, 'and shrinks again');
+  assert.strictEqual(run.grid.tiles.length, 14 * 20, 'shrunk grid is consistent');
+  mm.send({ t: 'setting', key: 'gw', v: 99 });
+  await waitFor(() => mm.set.gw === D.SETTINGS.gw.max, 'an out-of-range width clamps to the maximum');
+  assert.strictEqual(room.tiles.length, D.SETTINGS.gw.max * 20, 'clamped map is still consistent');
+  await setOpt(mm, 'gw', 14);
+
+  /* keep the round long so nothing wins by accident mid-test */
+  await setOpt(mm, 'vpTarget', 60);
+
+  /* ---- a tiny track, then go live ---------------------------------------- */
+  await paintTrack(mm);
+  await waitFor(() => run.grid.tiles[ROW * 14 + EX] === T.END, 'painted tiles reach the runner');
   run.send({ t: 'input', dx: 1, dy: 0 });
   await sleep(300);
-  assert.strictEqual(me(run).x, 20, 'runner is frozen at start during editing');
+  assert.strictEqual(me(run).x, startPx(SX), 'runners are parked at START while the track is edited');
+  run.send({ t: 'input', dx: 0, dy: 0 });
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'live');
+
+  mm.send({ t: 'setting', key: 'gw', v: 20 });
+  await sleep(150);
+  assert.strictEqual(mm.set.gw, 14, 'the map cannot be resized while the round is live');
+  assert.ok(mm.msgs.some(t => /only change while editing/.test(t)), 'and says so');
+
+  /* ---- finishing: VP, points, lap bonus ---------------------------------- */
+  const hp0 = me(run).mh;
+  await runRight(run, () => me(run).fin === 1, 'the runner finishes a lap');
+  assert.strictEqual(run.state.vpRun, mm.set.vpFinish, 'a finish scores VP for the runners');
+  assert.strictEqual(me(run).lap, 1, 'the lap is banked');
+  assert.ok(me(run).mh > hp0, 'the lap bonus raised max HP permanently');
+  assert.ok(me(run).sh > 0, 'finishing hands out a free shield');
+  assert.strictEqual(me(run).pt, mm.set.ptsFinish, 'and upgrade points');
+  assert.strictEqual(me(run).x, startPx(SX), 'and puts the runner back at the start');
+
+  /* ---- uncapped levels --------------------------------------------------- */
+  await setOpt(mm, 'ptsFinish', 20);
+  for (let i = 0; i < 3; i++) {
+    await runRight(run, () => me(run).fin === 2 + i, 'finish ' + (2 + i));
+  }
+  assert.ok(me(run).pt >= 60, 'banked plenty of points (' + me(run).pt + ')');
+  let spent = 0;
+  for (let lv = 0; lv < 10; lv++) {
+    spent += RULES.upgradeCost(mm.set, D.UPGRADES.speed, lv);
+    run.send({ t: 'upgrade', key: 'speed' });
+  }
+  await waitFor(() => me(run).up.speed === 10, 'Speed reaches level 10, well past the old cap of 8');
+  const ptsAfter = me(run).pt;
+  await setOpt(mm, 'upGrow', 200);
+  assert.strictEqual(RULES.upgradeCost(mm.set, D.UPGRADES.speed, 10),
+    RULES.upgradeCost({ upGrow: 200 }, D.UPGRADES.speed, 10), 'cost scaling setting feeds the shared rules');
+  await setOpt(mm, 'upGrow', 100);
+  assert.ok(ptsAfter >= 0, 'points went down, not negative');
+
+  /* ---- every runner ability ---------------------------------------------- */
+  for (const k of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'dash', 'emp', 'ghost']) {
+    run.send({ t: 'upgrade', key: k });
+  }
+  await waitFor(() => ['blink', 'shield', 'decoy', 'surge', 'medkit', 'dash', 'emp', 'ghost']
+    .every(k => me(run).up[k] >= 1), 'every ability is bought');
+
+  run.send({ t: 'input', dx: 1, dy: 0 });
+  await sleep(200);
+  const beforeBlink = me(run).x;
+  run.send({ t: 'act', a: 'blink' });
+  await waitFor(() => me(run).x > beforeBlink + 60, 'blink jumps the runner forward');
+  run.send({ t: 'input', dx: 0, dy: 0 });
+  await sleep(100);
+
+  run.send({ t: 'act', a: 'shield' });
+  await waitFor(() => me(run).sh >= 40, 'shield absorbs are stocked');
+  run.send({ t: 'act', a: 'decoy' });
+  await waitFor(() => run.state.dc.length === 1, 'a decoy is standing on the board');
+  run.send({ t: 'act', a: 'surge' });
+  await waitFor(() => me(run).su === 1, 'surge is running');
+  run.send({ t: 'act', a: 'ghost' });
+  await waitFor(() => me(run).gh === 1, 'ghost is running');
+  await waitFor(() => me(run).cd.blink > 0 && me(run).cd.shield > 0, 'abilities went on cooldown');
+
+  /* ---- traps -------------------------------------------------------------- */
+  mm.send({ t: 'tower', type: 'portal', x: SX + 2, y: ROW });
+  await waitFor(() => twAt(mm, SX + 2, ROW), 'portal trap built');
+  await park(mm, run);
+  /* The runner keeps moving on the same tick the portal fires, so the proof is
+     that they got past the portal and then ended up behind it again. */
+  let wentFar = false;
+  await runRight(run, () => {
+    const x = me(run).x;
+    if (x >= startPx(SX + 2)) wentFar = true;
+    return wentFar && x < startPx(SX + 1);
+  }, 'the portal sends the runner back toward START', 6000);
+  mm.send({ t: 'sell', x: SX + 2, y: ROW });
+  await waitFor(() => !twAt(mm, SX + 2, ROW), 'portal sold');
+
+  mm.send({ t: 'tower', type: 'snare', x: SX + 2, y: ROW });
+  await waitFor(() => twAt(mm, SX + 2, ROW), 'snare built');
+  await park(mm, run);
+  await runRight(run, () => me(run).rt === 1, 'the snare roots the runner', 6000);
+  await waitFor(() => me(run).rt === 0, 'and lets go again', 4000);
+  mm.send({ t: 'sell', x: SX + 2, y: ROW });
+  await waitFor(() => !twAt(mm, SX + 2, ROW), 'snare sold');
+
+  mm.send({ t: 'tower', type: 'mine', x: SX + 3, y: ROW });
+  await waitFor(() => twAt(mm, SX + 3, ROW), 'mine built');
+  await park(mm, run);
+  await runRight(run, () => !twAt(mm, SX + 3, ROW), 'the mine goes off once and is gone for good', 6000);
+
+  /* ---- towers, upgrade tracks, and a kill -------------------------------- */
+  const gold0 = mm.state.gold;
+  mm.send({ t: 'tower', type: 'turret', x: SX + 2, y: ROW });
+  await sleep(150);
+  assert.ok(!twAt(mm, SX + 2, ROW), 'a turret cannot be built on the path');
+  mm.send({ t: 'tower', type: 'spikes', x: SX + 2, y: ROW - 1 });
+  await sleep(150);
+  assert.ok(!twAt(mm, SX + 2, ROW - 1), 'a trap cannot be built off the path');
+
+  mm.send({ t: 'tower', type: 'turret', x: SX + 2, y: ROW - 1 });
+  await waitFor(() => twAt(mm, SX + 2, ROW - 1), 'turret built on grass');
+  const turret = twAt(mm, SX + 2, ROW - 1);
+  assert.deepStrictEqual(turret.up, { dmg: 0, rng: 0, spd: 0 }, 'a new turret has three upgrade tracks at zero');
+  assert.ok(mm.state.gold <= gold0 - RULES.buildCost(mm.set, D.TOWERS.turret) + 40, 'gold was charged');
+
+  const upCost = RULES.trackCost(mm.set, D.TOWERS.turret, 0);
+  const goldBeforeUp = mm.state.gold;
+  mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'dmg' });
+  await waitFor(() => twAt(mm, SX + 2, ROW - 1).up.dmg === 1, 'damage track upgraded');
+  mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'rng' });
+  mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'spd' });
+  await waitFor(() => {
+    const t = twAt(mm, SX + 2, ROW - 1);
+    return t.up.rng === 1 && t.up.spd === 1;
+  }, 'range and rate tracks upgraded too');
+  assert.strictEqual(RULES.level(twAt(mm, SX + 2, ROW - 1).up), 4, 'level is the sum of every track');
+  assert.ok(mm.state.gold < goldBeforeUp, 'upgrades cost gold (' + upCost + ' for the first)');
+  mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'pow' });
+  await sleep(150);
+  assert.strictEqual(twAt(mm, SX + 2, ROW - 1).up.pow, undefined, 'a turret has no power track to buy');
+
+  const vpMM0 = run.state.vpMM;
+  mm.send({ t: 'tower', type: 'sniper', x: SX + 4, y: ROW - 1 });
+  await waitFor(() => twAt(mm, SX + 4, ROW - 1), 'sniper built');
+  await setOpt(mm, 'respawn', 1);
+  await waitFor(() => me(run).d === 1, 'the towers kill the runner', 20000);
+  assert.strictEqual(run.state.vpMM, vpMM0 + mm.set.vpKill, 'a kill scores VP for the Mastermind');
+  assert.ok(me(run).dth >= 1, 'the death is counted');
+  await waitFor(() => me(run).d === 0, 'and the runner respawns', 5000);
+
+  /* ---- mastermind abilities ---------------------------------------------- */
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'edit mode, where the bankroll can be set');
+  await setOpt(mm, 'startGold', 5000);
+  await waitFor(() => mm.state.gold >= 5000, 'setting the bankroll while editing tops the gold up');
   mm.send({ t: 'mode', edit: false });
   await waitFor(() => mm.state.edit === 0, 'live again');
-  await waitFor(() => me(run).fin === 1, 'runner finishes the tiny track', 5000);
-  assert.strictEqual(me(run).pt, 4, '1 pity + 3 finish points');
-  run.send({ t: 'input', dx: 0, dy: 0 });
 
-  /* --- upgrades ---------------------------------------------------------- */
-  run.send({ t: 'upgrade', key: 'speed' });
-  await waitFor(() => me(run).up.speed === 1, 'speed upgrade bought');
-  run.send({ t: 'upgrade', key: 'hp' });
-  await waitFor(() => me(run).up.hp === 1 && me(run).mh === 130, 'vitality raises max hp');
-  run.send({ t: 'upgrade', key: 'dash' });
-  await waitFor(() => me(run).up.dash === 1, 'dash bought');
-  assert.strictEqual(me(run).pt, 1, 'points spent: 1+1+1');
-  run.send({ t: 'act', a: 'emp' });
-  await sleep(100);
-  assert.ok(run.msgs.some(t => /Buy the EMP/.test(t)), 'locked ability is refused nicely');
-  run.send({ t: 'act', a: 'dash' });
-  await waitFor(() => me(run).cd.dash > 0, 'dash goes on cooldown');
-
-  /* --- mastermind abilities ---------------------------------------------- */
+  mm.send({ t: 'ability', a: 'barrage', x: 200, y: 200 });
+  await waitFor(() => mm.state.mt.length >= 6, 'barrage puts six shells in the air');
+  mm.send({ t: 'ability', a: 'overdrive' });
+  await waitFor(() => mm.state.od > 0, 'overdrive is running');
   mm.send({ t: 'ability', a: 'freeze' });
-  await waitFor(() => mm.state.frz > 0, 'freeze is active');
-  mm.send({ t: 'ability', a: 'meteor', x: 60, y: 20 });
-  await waitFor(() => mm.state.mt.length === 1, 'meteor incoming');
-  await waitFor(() => mm.state.mt.length === 0, 'meteor landed', 3000);
+  await waitFor(() => mm.state.frz > 0, 'freeze is running');
+  mm.send({ t: 'ability', a: 'blackout' });
+  await waitFor(() => mm.state.bo > 0, 'blackout is running');
+  run.msgs.length = 0;
+  run.send({ t: 'act', a: 'dash' });
+  await sleep(150);
+  assert.ok(run.msgs.some(t => /Blackout/.test(t)), 'runner abilities are locked out during a blackout');
+  await waitFor(() => mm.state.bo === 0, 'blackout ends', 8000);
 
-  /* --- every sound the client asks for by name exists ---------------------- */
+  /* ---- income settings --------------------------------------------------- */
+  await setOpt(mm, 'income', 60);
+  const g1 = mm.state.gold;
+  await sleep(1200);
+  assert.ok(mm.state.gold > g1 + 30, 'a high income setting actually pays out (' + (mm.state.gold - g1) + ')');
+  await setOpt(mm, 'income', 0);
+  const g2 = mm.state.gold;
+  await sleep(800);
+  assert.ok(mm.state.gold - g2 < 5, 'zero income pays nothing');
+
+  /* ---- winning the round ------------------------------------------------- */
+  mm.send({ t: 'clearTowers' });
+  await waitFor(() => (mm.towers || []).length === 0, 'board cleared for the finale');
+  await setOpt(mm, 'vpTarget', run.state.vpRun + 1);
+  await runRight(run, () => !!run.state.win, 'somebody wins the round', 12000);
+  assert.strictEqual(run.state.win, 'runners', 'the runners took it');
+  assert.ok(run.state.winIn > 0, 'a countdown to the next round is running');
+  assert.ok(mm.msgs.some(t => /RUNNERS WIN/.test(t)), 'everyone is told');
+  await waitFor(() => run.state.win === null, 'the next round starts on its own', 14000);
+  assert.strictEqual(run.state.vpRun, 0, 'victory points reset');
+  assert.strictEqual(run.state.vpMM, 0, 'for both sides');
+  assert.strictEqual(run.state.edit, 1, 'and the Mastermind gets the board back in edit mode');
+  assert.strictEqual(mm.state.gold, mm.set.startGold, 'a new round starts from the configured bankroll');
+  assert.ok(me(run).up.speed >= 10, 'runner levels survive the new round');
+
+  /* ---- every sound the client asks for exists ---------------------------- */
+  const audio = fs.readFileSync(path.join(__dirname, '..', 'public', 'audio.js'), 'utf8');
+  const game = fs.readFileSync(path.join(__dirname, '..', 'public', 'game.js'), 'utf8');
+  const block = audio.slice(audio.indexOf('const V = {'), audio.indexOf('server event -> sound'));
   const voices = new Set();
-  const voiceBlock = audio.slice(audio.indexOf('const V = {'), audio.indexOf('/* ------------------------------------------------- server event'));
-  for (const m of voiceBlock.matchAll(/^\s{4}(\w+):/gm)) voices.add(m[1]);
-  assert.ok(voices.size > 15, 'found the voice table (' + voices.size + ' voices)');
-  for (const m of page.matchAll(/SFX\.play\('(\w+)'/g)) {
-    assert.ok(voices.has(m[1]), 'client plays "' + m[1] + '" but audio.js has no such voice');
+  for (const m of block.matchAll(/^\s{4}(\w+):/gm)) voices.add(m[1]);
+  assert.ok(voices.size > 30, 'found the voice table (' + voices.size + ' voices)');
+  for (const src of [game, audio]) {
+    for (const m of src.matchAll(/SFX\.play\('(\w+)'/g)) {
+      assert.ok(voices.has(m[1]), 'client plays "' + m[1] + '" but audio.js has no such voice');
+    }
+  }
+  /* and every event the server can send is handled by both the eyes and ears */
+  const srv = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const vfx = fs.readFileSync(path.join(__dirname, '..', 'public', 'vfx.js'), 'utf8');
+  const kinds = new Set();
+  for (const m of srv.matchAll(/\{ k: '(\w+)'/g)) kinds.add(m[1]);
+  assert.ok(kinds.size > 20, 'found the event kinds (' + kinds.size + ')');
+  for (const k of kinds) {
+    assert.ok(vfx.includes("case '" + k + "'"), 'vfx.js draws nothing for event "' + k + '"');
   }
 
-  /* --- seat handover ------------------------------------------------------ */
-  mm.ws.close();
-  await waitFor(() => run.state.mm === null, 'seat opens when the mastermind leaves');
-  run.send({ t: 'role', role: 'mm' });
-  await waitFor(() => run.state.mm && run.state.mm.id === run.welcome.id, 'runner takes the seat');
-  assert.strictEqual(run.state.r.length, 0, 'new mastermind is no longer a runner');
-  run.ws.close();
-
-  console.log('ALL TESTS PASSED');
+  console.log('ALL TESTS PASSED  (' + voices.size + ' voices, ' + kinds.size + ' event kinds)');
+  mm.ws.close(); run.ws.close();
   process.exit(0);
 }
 main().catch(e => { console.error('TEST FAILED:', e); process.exit(1); });

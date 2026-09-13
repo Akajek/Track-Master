@@ -6,15 +6,15 @@
  * wall of turrets from turning into a wall of noise.
  *
  * Browsers refuse to start audio before the user interacts with the page, so
- * SFX.init() is called from the join buttons (and from the first click or key
- * press afterwards, in case the context was suspended again).
+ * SFX.init() is called from the join buttons, and again from the first click or
+ * key press afterwards in case the context was suspended.
  */
 'use strict';
 const SFX = (() => {
   let ctx = null, master = null, noiseBuf = null;
   let enabled = true, volume = 0.7;
-  let flameNode = null, flameGain = null, flameActive = false;
-  let lowHpAt = 0;
+  let loopNode = null, loopGain = null, loopOn = false;
+  let lowHpAt = 0, boardW = 960;
   const lastAt = {};
 
   try {
@@ -43,10 +43,11 @@ const SFX = (() => {
 
   const ready = () => !!ctx && enabled && volume > 0;
   const now = () => ctx.currentTime;
+  function setBoard(w) { boardW = w || 960; }
 
-  /* Board x (0..960) to a stereo position. Never fully hard-panned: a sound
-     stuck in one ear is more distracting than it is informative. */
-  function px(x) { return Math.max(-0.7, Math.min(0.7, (x / 960 - 0.5) * 1.3)); }
+  /* Board x to a stereo position. Never hard-panned: a sound stuck in one ear
+     is more distracting than it is informative. */
+  function px(x) { return Math.max(-0.7, Math.min(0.7, (x / boardW - 0.5) * 1.3)); }
 
   function out(pan) {
     if (!ctx.createStereoPanner || pan === undefined || pan === null) return master;
@@ -56,7 +57,7 @@ const SFX = (() => {
     return p;
   }
 
-  /* Don't let ten towers firing on the same tick stack into a clipped mess. */
+  /* Don't let ten towers firing on one tick stack into a clipped mess. */
   function gate(key, ms) {
     const t = performance.now();
     if (lastAt[key] && t - lastAt[key] < ms) return false;
@@ -104,41 +105,73 @@ const SFX = (() => {
   }
 
   function chord(freqs, o) {
-    freqs.forEach((f, i) => tone(Object.assign({}, o, { f, delay: (o.delay || 0) + i * (o.gap === undefined ? 0.07 : o.gap) })));
+    freqs.forEach((f, i) => tone(Object.assign({}, o, {
+      f, delay: (o.delay || 0) + i * (o.gap === undefined ? 0.07 : o.gap),
+    })));
   }
 
   /* --------------------------------------------------------------- voices */
   const V = {
-    turret: pan => { if (!gate('turret', 45)) return; tone({ f: 760, f2: 300, type: 'square', dur: 0.06, v: 0.1, pan }); noise({ f: 3000, f2: 900, dur: 0.05, v: 0.07, pan }); },
-    sniper: pan => { tone({ f: 220, f2: 60, type: 'sawtooth', dur: 0.22, v: 0.22, pan }); noise({ f: 6000, f2: 500, dur: 0.18, v: 0.3, pan }); },
-    mortar: pan => { tone({ f: 150, f2: 48, type: 'sine', dur: 0.3, v: 0.35, pan }); noise({ f: 700, f2: 120, dur: 0.22, v: 0.16, pan }); },
-    tesla:  pan => { if (!gate('tesla', 60)) return; noise({ filter: 'bandpass', f: 2600, f2: 5200, q: 6, dur: 0.16, v: 0.3, pan }); tone({ f: 1400, f2: 2600, type: 'sawtooth', dur: 0.12, v: 0.07, pan }); },
-    boom:   (pan, r) => {
+    /* towers */
+    turret: p => { if (!gate('turret', 45)) return; tone({ f: 760, f2: 300, type: 'square', dur: 0.06, v: 0.1, pan: p }); noise({ f: 3000, f2: 900, dur: 0.05, v: 0.07, pan: p }); },
+    sniper: p => { tone({ f: 220, f2: 60, type: 'sawtooth', dur: 0.22, v: 0.22, pan: p }); noise({ f: 6000, f2: 500, dur: 0.18, v: 0.3, pan: p }); },
+    mortar: p => { tone({ f: 150, f2: 48, type: 'sine', dur: 0.3, v: 0.35, pan: p }); noise({ f: 700, f2: 120, dur: 0.22, v: 0.16, pan: p }); },
+    tesla:  p => { if (!gate('tesla', 60)) return; noise({ filter: 'bandpass', f: 2600, f2: 5200, q: 6, dur: 0.16, v: 0.3, pan: p }); tone({ f: 1400, f2: 2600, type: 'sawtooth', dur: 0.12, v: 0.07, pan: p }); },
+    pulse:  p => { if (!gate('pulse', 70)) return; tone({ f: 320, f2: 90, type: 'triangle', dur: 0.35, v: 0.3, pan: p }); noise({ filter: 'bandpass', f: 900, f2: 2600, q: 2, dur: 0.3, v: 0.22, pan: p }); },
+    boom:   (p, r) => {
       const big = (r || 70) / 70;
-      noise({ f: 1400 * big, f2: 60, dur: 0.5 * big, v: 0.42, pan, rate: 0.8 });
-      tone({ f: 110 * big, f2: 32, type: 'sine', dur: 0.55 * big, v: 0.5, pan });
-      tone({ f: 300, f2: 70, type: 'triangle', dur: 0.2, v: 0.14, pan });
+      noise({ f: 1400 * big, f2: 60, dur: 0.5 * Math.min(1.4, big), v: 0.42, pan: p, rate: 0.8 });
+      tone({ f: 110 * big, f2: 32, type: 'sine', dur: 0.55 * Math.min(1.4, big), v: 0.5, pan: p });
+      tone({ f: 300, f2: 70, type: 'triangle', dur: 0.2, v: 0.14, pan: p });
     },
-    hitMe:   pan => { if (!gate('hitMe', 70)) return; tone({ f: 180, f2: 70, type: 'square', dur: 0.12, v: 0.26, pan }); noise({ f: 1800, f2: 300, dur: 0.1, v: 0.18, pan }); },
-    hitThem: pan => { if (!gate('hitThem', 90)) return; noise({ f: 1600, f2: 500, dur: 0.06, v: 0.07, pan }); },
-    spikes:  pan => { noise({ filter: 'bandpass', f: 3800, q: 8, dur: 0.12, v: 0.3, pan }); tone({ f: 900, f2: 400, type: 'square', dur: 0.09, v: 0.12, pan }); },
-    die:     pan => { tone({ f: 400, f2: 55, type: 'sawtooth', dur: 0.7, v: 0.3, pan }); noise({ f: 900, f2: 100, dur: 0.6, v: 0.18, pan }); },
-    finish:  pan => { chord([523, 659, 784, 1047], { type: 'triangle', dur: 0.28, v: 0.3, gap: 0.075, pan }); chord([262, 330, 392, 523], { type: 'sine', dur: 0.3, v: 0.14, gap: 0.075, pan }); },
-    emp:     pan => { noise({ filter: 'bandpass', f: 300, f2: 5000, q: 4, dur: 0.35, v: 0.3, pan }); tone({ f: 90, f2: 1200, type: 'sawtooth', dur: 0.3, v: 0.1, pan }); tone({ f: 1800, f2: 200, type: 'sine', dur: 0.25, v: 0.1, delay: 0.28, pan }); },
-    dash:    pan => { noise({ filter: 'bandpass', f: 500, f2: 2600, q: 2, dur: 0.22, v: 0.3, pan }); tone({ f: 300, f2: 800, type: 'triangle', dur: 0.16, v: 0.1, pan }); },
-    build:   pan => { tone({ f: 880, type: 'square', dur: 0.05, v: 0.14, pan }); tone({ f: 1320, type: 'square', dur: 0.09, v: 0.12, delay: 0.06, pan }); },
+    /* being hurt */
+    hitMe:   p => { if (!gate('hitMe', 70)) return; tone({ f: 180, f2: 70, type: 'square', dur: 0.12, v: 0.26, pan: p }); noise({ f: 1800, f2: 300, dur: 0.1, v: 0.18, pan: p }); },
+    hitThem: p => { if (!gate('hitThem', 90)) return; noise({ f: 1600, f2: 500, dur: 0.06, v: 0.07, pan: p }); },
+    spikes:  p => { noise({ filter: 'bandpass', f: 3800, q: 8, dur: 0.12, v: 0.3, pan: p }); tone({ f: 900, f2: 400, type: 'square', dur: 0.09, v: 0.12, pan: p }); },
+    saw:     p => { if (!gate('saw', 150)) return; noise({ filter: 'bandpass', f: 2200, f2: 3400, q: 9, dur: 0.18, v: 0.22, pan: p }); },
+    absorb:  p => { if (!gate('absorb', 90)) return; tone({ f: 520, f2: 760, type: 'sine', dur: 0.1, v: 0.14, pan: p }); },
+    shieldpop: p => { noise({ filter: 'highpass', f: 2600, dur: 0.3, v: 0.2, pan: p }); chord([880, 660], { type: 'sine', dur: 0.2, v: 0.16, gap: 0.04, pan: p }); },
+    die:     p => { tone({ f: 400, f2: 55, type: 'sawtooth', dur: 0.7, v: 0.3, pan: p }); noise({ f: 900, f2: 100, dur: 0.6, v: 0.18, pan: p }); },
+    /* rewards */
+    finish:  p => { chord([523, 659, 784, 1047], { type: 'triangle', dur: 0.28, v: 0.3, gap: 0.075, pan: p }); chord([262, 330, 392, 523], { type: 'sine', dur: 0.3, v: 0.14, gap: 0.075, pan: p }); },
+    lap:     p => chord([784, 988, 1319], { type: 'sine', dur: 0.22, v: 0.16, gap: 0.05, pan: p }),
+    vpRun:   () => chord([659, 880], { type: 'triangle', dur: 0.25, v: 0.2, gap: 0.08 }),
+    vpMM:    () => chord([330, 262], { type: 'sawtooth', dur: 0.25, v: 0.16, gap: 0.08 }),
+    levelup: p => chord([659, 880, 1175], { type: 'triangle', dur: 0.18, v: 0.2, gap: 0.05, pan: p }),
+    heal:    p => { chord([523, 784], { type: 'sine', dur: 0.25, v: 0.2, gap: 0.06, pan: p }); noise({ filter: 'highpass', f: 3000, dur: 0.3, v: 0.06, pan: p }); },
+    /* runner abilities */
+    emp:     p => { noise({ filter: 'bandpass', f: 300, f2: 5000, q: 4, dur: 0.35, v: 0.3, pan: p }); tone({ f: 90, f2: 1200, type: 'sawtooth', dur: 0.3, v: 0.1, pan: p }); tone({ f: 1800, f2: 200, type: 'sine', dur: 0.25, v: 0.1, delay: 0.28, pan: p }); },
+    dash:    p => { noise({ filter: 'bandpass', f: 500, f2: 2600, q: 2, dur: 0.22, v: 0.3, pan: p }); tone({ f: 300, f2: 800, type: 'triangle', dur: 0.16, v: 0.1, pan: p }); },
+    blink:   p => { tone({ f: 1200, f2: 200, type: 'sine', dur: 0.18, v: 0.2, pan: p }); tone({ f: 200, f2: 1600, type: 'sine', dur: 0.18, v: 0.18, delay: 0.06, pan: p }); noise({ filter: 'bandpass', f: 2000, q: 5, dur: 0.2, v: 0.12, pan: p }); },
+    ghost:   p => { chord([880, 1175], { type: 'sine', dur: 0.4, v: 0.12, gap: 0.06, pan: p }); noise({ filter: 'highpass', f: 5000, dur: 0.5, v: 0.07, pan: p }); },
+    shieldup: p => { chord([392, 523, 659], { type: 'sine', dur: 0.3, v: 0.18, gap: 0.05, pan: p }); noise({ filter: 'bandpass', f: 1200, f2: 400, q: 3, dur: 0.3, v: 0.1, pan: p }); },
+    decoy:   p => { chord([440, 554], { type: 'square', dur: 0.16, v: 0.12, gap: 0.05, pan: p }); },
+    decoypop: p => { noise({ filter: 'bandpass', f: 1400, q: 3, dur: 0.15, v: 0.14, pan: p }); },
+    surge:   p => { tone({ f: 200, f2: 900, type: 'sawtooth', dur: 0.35, v: 0.2, pan: p }); noise({ filter: 'bandpass', f: 600, f2: 3200, q: 2, dur: 0.35, v: 0.16, pan: p }); },
+    /* traps */
+    snare:   p => { noise({ filter: 'bandpass', f: 700, f2: 200, q: 4, dur: 0.3, v: 0.26, pan: p }); tone({ f: 300, f2: 90, type: 'square', dur: 0.25, v: 0.18, pan: p }); },
+    portal:  p => { tone({ f: 700, f2: 120, type: 'sine', dur: 0.6, v: 0.26, pan: p }); noise({ filter: 'bandpass', f: 2400, f2: 300, q: 3, dur: 0.6, v: 0.2, pan: p }); },
+    portalout: p => tone({ f: 140, f2: 700, type: 'sine', dur: 0.35, v: 0.18, pan: p }),
+    root:    p => { tone({ f: 260, f2: 100, type: 'square', dur: 0.3, v: 0.2, pan: p }); },
+    slow:    p => { noise({ filter: 'lowpass', f: 700, f2: 200, dur: 0.3, v: 0.16, pan: p }); tone({ f: 300, f2: 150, type: 'triangle', dur: 0.3, v: 0.1, pan: p }); },
+    /* mastermind and round flow */
+    build:   p => { tone({ f: 880, type: 'square', dur: 0.05, v: 0.14, pan: p }); tone({ f: 1320, type: 'square', dur: 0.09, v: 0.12, delay: 0.06, pan: p }); },
+    sell:    p => { chord([880, 587], { type: 'triangle', dur: 0.14, v: 0.16, gap: 0.06, pan: p }); },
+    spawn:   () => chord([392, 523, 784], { type: 'triangle', dur: 0.2, v: 0.2, gap: 0.06 }),
     respawn: () => chord([392, 523, 784], { type: 'triangle', dur: 0.2, v: 0.2, gap: 0.06 }),
     freeze:  () => { chord([1568, 1175, 880, 659], { type: 'sine', dur: 0.5, v: 0.26, gap: 0.05 }); noise({ filter: 'highpass', f: 4000, dur: 0.7, v: 0.1 }); tone({ f: 200, f2: 60, type: 'sine', dur: 0.8, v: 0.2 }); },
     unfreeze: () => chord([660, 990], { type: 'sine', dur: 0.18, v: 0.13, gap: 0.05 }),
-    meteor:  pan => { tone({ f: 220, f2: 1500, type: 'sawtooth', dur: 0.95, a: 0.15, v: 0.14, pan }); noise({ filter: 'bandpass', f: 400, f2: 3000, q: 3, dur: 0.95, a: 0.2, v: 0.12, pan }); },
+    meteor:  p => { tone({ f: 220, f2: 1500, type: 'sawtooth', dur: 0.95, a: 0.15, v: 0.14, pan: p }); noise({ filter: 'bandpass', f: 400, f2: 3000, q: 3, dur: 0.95, a: 0.2, v: 0.12, pan: p }); },
     live:    () => chord([392, 523, 659, 1047], { type: 'square', dur: 0.22, v: 0.2, gap: 0.09 }),
     edit:    () => chord([440, 330], { type: 'triangle', dur: 0.22, v: 0.2, gap: 0.09 }),
+    winrun:  () => { chord([523, 659, 784, 1047, 1319], { type: 'triangle', dur: 0.45, v: 0.3, gap: 0.13 }); chord([262, 330, 392, 523, 659], { type: 'sine', dur: 0.5, v: 0.16, gap: 0.13 }); },
+    winmm:   () => { chord([330, 262, 220, 165], { type: 'sawtooth', dur: 0.5, v: 0.28, gap: 0.15 }); tone({ f: 80, f2: 45, type: 'sine', dur: 1.4, v: 0.3, delay: 0.4 }); },
+    /* interface */
     good:    () => chord([784, 1175], { type: 'triangle', dur: 0.16, v: 0.22, gap: 0.06 }),
     warn:    () => { tone({ f: 200, f2: 150, type: 'square', dur: 0.16, v: 0.16 }); tone({ f: 150, f2: 110, type: 'square', dur: 0.16, v: 0.12, delay: 0.1 }); },
     info:    () => tone({ f: 660, f2: 880, type: 'sine', dur: 0.1, v: 0.12 }),
     ui:      () => { if (!gate('ui', 40)) return; tone({ f: 1100, f2: 1500, type: 'square', dur: 0.03, v: 0.06 }); },
     paint:   () => { if (!gate('paint', 55)) return; noise({ filter: 'bandpass', f: 900 + Math.random() * 400, q: 3, dur: 0.05, v: 0.1 }); },
-    slow:    pan => { noise({ filter: 'lowpass', f: 700, f2: 200, dur: 0.3, v: 0.16, pan }); tone({ f: 300, f2: 150, type: 'triangle', dur: 0.3, v: 0.1, pan }); },
     heart:   () => { tone({ f: 70, f2: 45, type: 'sine', dur: 0.12, v: 0.3 }); tone({ f: 60, f2: 40, type: 'sine', dur: 0.16, v: 0.22, delay: 0.17 }); },
   };
 
@@ -146,50 +179,71 @@ const SFX = (() => {
   function event(e, myId) {
     if (!ready()) return;
     switch (e.k) {
-      case 'fire': (e.ty === 'mortar' ? V.mortar : V.turret)(px(e.x)); break;
+      case 'fire':
+        (e.ty === 'mortar' ? V.mortar : e.ty === 'sniper' ? V.sniper : V.turret)(px(e.x));
+        break;
       case 'shot': (e.z ? V.tesla : V.sniper)(px(e.x1)); break;
+      case 'pulse': V.pulse(px(e.x)); break;
       case 'boom': V.boom(px(e.x), e.r); break;
       case 'hit':
         if (e.s === 'spikes') V.spikes(px(e.x));
         else if (e.id === myId) V.hitMe(px(e.x));
         else V.hitThem(px(e.x));
         break;
+      case 'burn': if (e.s === 'saw') V.saw(px(e.x)); break;
+      case 'absorb': V.absorb(px(e.x)); break;
+      case 'shieldpop': V.shieldpop(px(e.x)); break;
+      case 'shieldup': V.shieldup(px(e.x)); break;
       case 'die': V.die(px(e.x)); break;
       case 'fin': V.finish(px(e.x)); break;
+      case 'lap': V.lap(px(e.x)); break;
+      case 'vp': (e.team === 'mm' ? V.vpMM : V.vpRun)(); break;
       case 'emp': V.emp(px(e.x)); break;
       case 'dash': V.dash(px(e.x)); break;
+      case 'blink': V.blink(px(e.x2)); break;
+      case 'ghost': V.ghost(px(e.x)); break;
+      case 'surge': V.surge(px(e.x)); break;
+      case 'heal': V.heal(px(e.x)); break;
+      case 'decoy': V.decoy(px(e.x)); break;
+      case 'decoypop': V.decoypop(px(e.x)); break;
+      case 'snare': V.snare(px(e.x)); break;
+      case 'portal': V.portal(px(e.x)); break;
+      case 'portalout': V.portalout(px(e.x)); break;
+      case 'spawn': V.spawn(); break;
       case 'build': V.build(px(e.x)); break;
+      case 'sell': V.sell(px(e.x)); break;
+      case 'levelup': V.levelup(px(e.x)); break;
     }
   }
 
   /* --------------------------------------------------- continuous sounds */
-  /* Flamers hum while they burn, so the loop lives as long as one is firing. */
+  /* Flamers, lasers and saws hum while they work, so one loop runs as long as
+     at least one of them is going. */
   function flame(active) {
     if (!ctx) return;
-    if (active && !flameNode && ready()) {
-      flameNode = ctx.createBufferSource();
-      flameNode.buffer = noiseBuf; flameNode.loop = true; flameNode.playbackRate.value = 0.45;
+    if (active && !loopNode && ready()) {
+      loopNode = ctx.createBufferSource();
+      loopNode.buffer = noiseBuf; loopNode.loop = true; loopNode.playbackRate.value = 0.45;
       const f = ctx.createBiquadFilter();
       f.type = 'bandpass'; f.frequency.value = 520; f.Q.value = 0.8;
-      flameGain = ctx.createGain(); flameGain.gain.value = 0.0001;
-      flameNode.connect(f); f.connect(flameGain); flameGain.connect(master);
-      flameNode.start();
+      loopGain = ctx.createGain(); loopGain.gain.value = 0.0001;
+      loopNode.connect(f); f.connect(loopGain); loopGain.connect(master);
+      loopNode.start();
     }
-    if (!flameNode) return;
-    const target = (active && ready()) ? 0.11 : 0.0001;
-    if (flameActive !== active) {
-      flameActive = active;
-      flameGain.gain.cancelScheduledValues(now());
-      flameGain.gain.setValueAtTime(Math.max(0.0001, flameGain.gain.value), now());
-      flameGain.gain.exponentialRampToValueAtTime(target, now() + 0.12);
+    if (!loopNode) return;
+    if (loopOn !== active) {
+      loopOn = active;
+      const target = (active && ready()) ? 0.11 : 0.0001;
+      loopGain.gain.cancelScheduledValues(now());
+      loopGain.gain.setValueAtTime(Math.max(0.0001, loopGain.gain.value), now());
+      loopGain.gain.exponentialRampToValueAtTime(target, now() + 0.12);
     }
   }
 
   /* A heartbeat when you are nearly dead. Quiet, and it stops as soon as you
      heal past the threshold. */
   function lowHp(active) {
-    if (!ready()) { lowHpAt = 0; return; }
-    if (!active) { lowHpAt = 0; return; }
+    if (!ready() || !active) { lowHpAt = 0; return; }
     const t = performance.now();
     if (t - lowHpAt < 900) return;
     lowHpAt = t;
@@ -214,7 +268,7 @@ const SFX = (() => {
   }
 
   return {
-    init, event, flame, lowHp, setEnabled, setVolume,
+    init, event, flame, lowHp, setEnabled, setVolume, setBoard,
     isEnabled: () => enabled, getVolume: () => volume,
     state: () => (ctx ? ctx.state : 'none'),
     play: (name, pan) => { if (ready() && V[name]) V[name](pan); },
