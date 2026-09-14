@@ -216,6 +216,22 @@ const SFX = (() => {
     unlockpt: () => { chord([880, 1175, 1568], { type: 'triangle', dur: 0.22, v: 0.2, gap: 0.05 }); noise({ filter: 'highpass', f: 4000, dur: 0.3, v: 0.07 }); },
     unlocked: () => { chord([392, 523, 659, 880, 1047], { type: 'square', dur: 0.3, v: 0.22, gap: 0.07 }); tone({ f: 98, f2: 196, type: 'sawtooth', dur: 0.5, v: 0.2 }); },
     slot:     p => chord([659, 988], { type: 'triangle', dur: 0.16, v: 0.16, gap: 0.05, pan: p }),
+    /* ---- loot: the rarer it is, the longer and brighter the flourish ---- */
+    loot:     (p, r) => {
+      const rare = r || 0;
+      if (rare === 0) { chord([784, 1047], { type: 'triangle', dur: 0.16, v: 0.16, gap: 0.05, pan: p }); return; }
+      if (rare === 1) { chord([659, 880, 1175], { type: 'triangle', dur: 0.22, v: 0.2, gap: 0.06, pan: p }); return; }
+      if (rare === 2) {
+        chord([523, 659, 880, 1175], { type: 'triangle', dur: 0.3, v: 0.24, gap: 0.07, pan: p });
+        noise({ filter: 'highpass', f: 4000, dur: 0.5, v: 0.08, pan: p });
+        return;
+      }
+      chord([392, 523, 659, 784, 1047, 1319], { type: 'triangle', dur: 0.45, v: 0.28, gap: 0.075, pan: p });
+      chord([196, 262, 330], { type: 'sine', dur: 0.7, v: 0.18, gap: 0.075, pan: p });
+      tone({ f: 80, f2: 200, type: 'sawtooth', dur: 0.6, v: 0.22, pan: p });
+      noise({ filter: 'bandpass', f: 1200, f2: 7000, q: 2, dur: 0.9, a: 0.15, v: 0.14, delay: 0.1, pan: p });
+    },
+    gear:     p => { tone({ f: 420, f2: 700, type: 'square', dur: 0.07, v: 0.13, pan: p }); noise({ filter: 'bandpass', f: 2400, q: 5, dur: 0.12, v: 0.12, pan: p }); },
   };
 
   /* ------------------------------------------------- server event -> sound */
@@ -273,6 +289,8 @@ const SFX = (() => {
       case 'slot': V.slot(px(e.x)); break;
       case 'escapestart': if (e.id === myId) V.escapeon(px(e.x)); break;
       case 'escapelost': if (e.id === myId) V.escapeoff(px(e.x)); break;
+      case 'loot': V.loot(px(e.x), e.r || 0); break;
+      case 'gear': V.gear(px(e.x)); break;
     }
   }
 

@@ -393,6 +393,34 @@ const VFX = (() => {
         ring(e.x, e.y, { r0: 4, r1: 30, life: 0.35, c: '#7dd3fc', w: 2 });
         break;
 
+      /* ---- loot ---- */
+      case 'loot': {
+        const big = (e.r || 0) >= 2;
+        ring(e.x, e.y, { r0: 4, r1: big ? 70 : 40, life: big ? 0.6 : 0.4, c: e.c, w: big ? 4 : 2 });
+        burst(e.x, e.y, { n: big ? 28 : 12, c: [e.c, '#fff'], spd0: 50, spd1: big ? 260 : 150,
+          size0: 1.5, size1: big ? 4 : 2.8, life0: 0.3, life1: big ? 0.9 : 0.55, grav: 140 });
+        text(e.x, e.y - 46, e.n || 'loot', { c: e.c, size: big ? 15 : 12, life: big ? 2 : 1.3, vy: -20 });
+        if ((e.r || 0) >= 3) {
+          /* a legendary is allowed to stop the room */
+          for (let i = 0; i < 3; i++) {
+            ring(e.x, e.y, { r0: 6 + i * 10, r1: 110 + i * 40, life: 0.7 + i * 0.2, c: e.c, w: 3 });
+          }
+          for (let i = 0; i < 10; i++) {
+            const a = (i / 10) * Math.PI * 2;
+            beam(e.x, e.y, e.x + Math.cos(a) * 90, e.y + Math.sin(a) * 90, { c: '#fff', w: 2, life: 0.35 });
+          }
+          confetti(e.x, e.y, 40);
+          shake(5);
+          if (e.id === myId) flash('#78350f', 0.35);
+        }
+        break;
+      }
+      case 'gear':
+        ring(e.x, e.y, { r0: 26, r1: 8, life: 0.32, c: e.c || '#9ca3af', w: 3, ease: 'in' });
+        burst(e.x, e.y, { n: 10, c: [e.c || '#9ca3af', '#fff'], spd0: 30, spd1: 120,
+          size0: 1.2, size1: 2.6, life0: 0.15, life1: 0.4 });
+        break;
+
       case 'win':
         flash(e.team === 'runners' ? '#065f46' : '#7f1d1d', 0.5);
         shake(10);

@@ -12,6 +12,8 @@ const $ = id => document.getElementById(id);
 let ws = null, me = null, D = null, SET = null;
 let grid = null, towers = [], S = null;
 let UL = { have: [], pts: 0, up: {} };     /* the Mastermind's armoury */
+let INV = { bag: [], equip: {} };         /* this runner's bag and worn gear */
+let bagFor = '';                          /* the bag signature the DOM was built from */
 let twDyn = new Map();                     /* tower id -> {a,f,d,c,bx,by,bt} */
 let lastStateAt = 0;
 const disp = new Map();                    /* smoothed runner positions */
@@ -60,6 +62,10 @@ function setWithSiege() {
 }
 function towerAt(x, y) { return towers.find(t => t.gx === x && t.gy === y); }
 function abilityDef(k) { return D.UPGRADES[k]; }
+/* Bought levels plus the levels your gear is lending you. Stat formulas take
+   this; prices and "lv N" labels take the bought levels on their own. */
+function totOf(r) { return RULES.totalLevels(r.up, r.gu); }
+function rarityOf(i) { return RULES.RARITY[i] || RULES.RARITY[0]; }
 
 /* ------------------------------------------------------------------ connect */
 function connect(role) {
@@ -89,6 +95,7 @@ function onMsg(m) {
       $('roomCode').textContent = m.room;
       history.replaceState(null, '', '?room=' + m.room);
       toolKind = null; selTower = null; VFX.reset();
+      INV = { bag: [], equip: {} }; bagFor = '';
       break;
     case 'set': {
       /* Only the first settings message builds the sidebar. Rebuilding it on
@@ -102,6 +109,11 @@ function onMsg(m) {
     }
     case 'ul':
       UL = { have: m.have, pts: m.pts, up: m.up || {} };
+      updateSide();
+      break;
+    case 'inv':
+      INV = { bag: m.bag || [], equip: m.equip || {} };
+      buildBag();
       updateSide();
       break;
     case 'g': {
@@ -420,6 +432,9 @@ function buildRunner() {
     '<div style="margin-top:8px">Upgrade points: <span class="gold" id="ptsTxt">0</span>' +
       '<span class="muted" id="lapTxt"></span></div>' +
     '<div class="hint" id="rewardHint"></div>' +
+    '<h3>Gear</h3><div id="gearBox"></div>' +
+    '<div class="hint" id="gearHint"></div>' +
+    '<div class="list" id="bagList"></div>' +
     '<h3>Your numbers</h3><div id="statBox" class="statbox"></div>' +
     '<h3>Ultimate slot</h3><div id="ultBox"></div>' +
     '<h3>Ability slots</h3><div id="slotBox"></div>' +
@@ -434,6 +449,9 @@ function buildRunner() {
   el.shWrap = $('shWrap'); el.shTxt = $('shTxt'); el.shBar = $('shBar');
   el.baWrap = $('baWrap'); el.baTxt = $('baTxt'); el.baBar = $('baBar');
   el.rewardHint = $('rewardHint'); el.statBox = $('statBox'); el.slotBox = $('slotBox');
+  el.gearBox = $('gearBox'); el.gearHint = $('gearHint'); el.bagList = $('bagList');
+  bagFor = '';
+  buildBag();
 
   $('drHint').innerHTML =
     'Nothing is hard capped and nothing is unlimited. Passive upgrades pay full value to level ' +
@@ -441,8 +459,9 @@ function buildRunner() {
     'buttons mark <span class="warn">diminishing</span> and show as an <b>effective</b> level. ' +
     '<b>Speed</b> is on a harsher curve of its own — it used to be a teleport. ' +
     'Abilities are capped at level <b>' + RULES.AB_CAP + '</b> and diminish past it. ' +
-    'Dodge and Deflection <b>share</b> one ceiling of <b>' + Math.round(RULES.DODGE_MAX * 100) +
-    '%</b> — levels in either push the same curve, and together they never pass it.';
+    'Dodge and Deflection each approach <b>' + Math.round(RULES.DODGE_MAX * 100) +
+    '%</b> on their own curve, and they <b>stack</b> — buying both is better than buying either. ' +
+    'Gear lends you extra levels on top of what you bought, and those ride the same curves.';
 
   /* The ultimate: one slot, one SUPER BUFF, one very long cooldown. */
   el.ultBox = $('ultBox');
@@ -527,7 +546,10 @@ function updateSide() {
     setHtml(el.score,
       '<tr><th>Runner</th><th>Fin</th><th>Died</th><th>Lv</th><th>Pts</th></tr>' +
       rows.map(r => {
-        let lv = 0; for (const k in r.up) lv += r.up[k];
+        /* what the runner is worth right now, gear included -- it is the
+           Mastermind's only quick read on how dangerous somebody has become */
+        const rt = totOf(r);
+        let lv = 0; for (const k in rt) lv += rt[k];
         return '<tr><td>' + (r.id === me.id ? '<b>' + esc(r.n) + '</b>' : esc(r.n)) + '</td><td>' +
           r.fin + '</td><td>' + r.dth + '</td><td>' + lv + '</td><td>' + r.pt + '</td></tr>';
       }).join('') +
@@ -693,20 +715,118 @@ function refreshTowerPanel(tw, def) {
   panelEls.sell.textContent = '+' + RULES.sellValue(tw.sp);
 }
 
+/* ================================================================== gear */
+/* Three worn slots and a bag. The bag's DOM is rebuilt only when the bag
+   actually changes -- never on a snapshot -- so the button you are pressing is
+   still there when you let go. */
+function itemLine(it) {
+  const parts = [];
+  for (const k in it.stats) parts.push('+' + it.stats[k] + ' ' + D.UPGRADES[k].name);
+  return parts.join(', ');
+}
+function bagSig() {
+  return INV.bag.map(i => i.id).join(',') + '|' +
+    RULES.EQUIP_SLOTS.map(sl => INV.equip[sl] || 0).join(',');
+}
+
+function buildBag() {
+  if (!el.bagList || !D) return;
+  const sig = bagSig();
+  if (sig === bagFor) return;
+  bagFor = sig;
+
+  /* the three worn slots */
+  el.gearBox.innerHTML = '';
+  el.gearEls = [];
+  for (const sl of RULES.EQUIP_SLOTS) {
+    const it = INV.bag.find(i => i.id === INV.equip[sl]);
+    const row = document.createElement('div');
+    row.className = 'gearslot' + (it ? ' worn' : '');
+    if (it) row.style.borderColor = rarityOf(it.r).color;
+    row.innerHTML = '<span class="gs">' + RULES.SLOT_NAME[sl] + '</span>' +
+      (it ? '<span class="gn" style="color:' + rarityOf(it.r).color + '">' + esc(it.name) + '</span>' +
+            '<small>' + esc(itemLine(it)) + '</small>'
+          : '<span class="gn muted">empty</span><small>nothing equipped</small>');
+    el.gearBox.appendChild(row);
+    if (it) {
+      const off = document.createElement('button');
+      off.className = 'drop';
+      off.textContent = '✕';
+      off.title = 'Take off ' + it.name;
+      off.onclick = () => send({ t: 'unequip', slot: sl });
+      row.appendChild(off);
+      el.gearEls.push(off);
+    }
+  }
+
+  /* the bag itself, best first within each slot. Equipping rebuilds this list,
+     so hold the scroll position or the row you just clicked jumps away. */
+  const scroll = el.bagList.scrollTop;
+  el.bagList.innerHTML = '';
+  el.bagBtns = [];
+  const order = RULES.EQUIP_SLOTS;
+  const sorted = INV.bag.slice().sort((a, b) =>
+    order.indexOf(a.slot) - order.indexOf(b.slot) || b.r - a.r ||
+    RULES.itemPower(b) - RULES.itemPower(a));
+  for (const it of sorted) {
+    const wrap = document.createElement('div');
+    wrap.className = 'abrow';
+    const b = document.createElement('button');
+    b.dataset.item = it.id;
+    b.style.borderLeft = '3px solid ' + rarityOf(it.r).color;
+    b.innerHTML = '<span class="name"><span style="color:' + rarityOf(it.r).color + '">' +
+      esc(it.name) + '</span><small>' + RULES.SLOT_NAME[it.slot] + ' · ' + esc(itemLine(it)) +
+      '</small></span><span class="cost muted"></span>';
+    b.onclick = () => send({ t: 'equip', id: it.id });
+    const kill = document.createElement('button');
+    kill.className = 'drop';
+    kill.textContent = '✕';
+    kill.title = 'Discard ' + it.name;
+    kill.onclick = () => {
+      if (confirm('Discard ' + it.name + '? It is gone for good.')) send({ t: 'discard', id: it.id });
+    };
+    wrap.appendChild(b); wrap.appendChild(kill);
+    el.bagList.appendChild(wrap);
+    el.bagBtns.push({ it, b });
+  }
+  el.bagList.scrollTop = scroll;
+}
+
+function updateGear(r) {
+  if (!el.gearHint) return;
+  const canSwap = !!r.st0 && !r.d;
+  const odds = RULES.RARITY.map(x => x.odds + '% ' + x.name.toLowerCase()).join(' · ');
+  setHtml(el.gearHint,
+    'Every escape drops one item: ' + odds + '. ' +
+    (canSwap ? '<b class="good">You are on a START tile — swap freely.</b>'
+             : '<b class="warn">Walk back to a START tile to change your gear.</b>') +
+    ' Bag ' + INV.bag.length + ' / ' + RULES.BAG_MAX + '.');
+  for (const g of el.gearEls || []) g.disabled = !canSwap;
+  for (const e of el.bagBtns || []) {
+    const worn = INV.equip[e.it.slot] === e.it.id;
+    e.b.disabled = worn || !canSwap;
+    e.b.classList.toggle('owned', worn);
+    e.b.querySelector('.cost').textContent = worn ? 'worn' : canSwap ? 'equip' : '';
+  }
+}
+
 /* ------------------------------------------------------------ runner update */
 /* A level and what that level is actually worth, which past the soft cap are
    two different numbers. */
-function lvLabel(key, kind, lv) {
-  if (!lv) return 'lv 0';
-  const e = RULES.effOf(key, kind, lv);
-  const soft = RULES.softCapped(key, kind, lv);
-  if (!soft) return 'lv ' + lv;
-  return 'lv ' + lv + ' <span class="warn">→ eff ' + e.toFixed(1) + '</span>';
+function lvLabel(key, kind, lv, gear) {
+  const tot = lv + (gear || 0);
+  const worn = gear ? ' <span class="gearlv">+' + gear + '</span>' : '';
+  if (!tot) return 'lv 0';
+  const e = RULES.effOf(key, kind, tot);
+  if (!RULES.softCapped(key, kind, tot)) return 'lv ' + lv + worn;
+  return 'lv ' + lv + worn + ' <span class="warn">→ eff ' + e.toFixed(1) + '</span>';
 }
 
 function updateRunner() {
   const r = myRunner();
   if (!r || !el.hpTxt) return;
+  const tot = totOf(r);
+  updateGear(r);
   setHtml($('statPill'), 'Finishes <b>' + r.fin + '</b> &nbsp; Points <span class="gold">' + r.pt + '</span>');
   el.hpTxt.textContent = Math.ceil(r.hp) + ' / ' + r.mh;
   el.hpBar.style.width = (100 * r.hp / r.mh) + '%';
@@ -722,28 +842,29 @@ function updateRunner() {
   setHtml(el.rewardHint, 'Reaching an END is not enough: <b class="gold">hold it for ' + hold.toFixed(2) + 's</b> ' +
     '(it resets if you step off, and grows by ' + SET.escapeLap + 's every time you win). ' +
     'You take <b class="good">' + SET.endResist + '% less damage</b> while standing on it. ' +
-    'Each escape: <b class="good">+' + SET.vpFinish + ' VP</b>, +' + (SET.ptsFinish + r.up.scholar) +
-    ' points, a full heal and a permanent +' + SET.lapBonus + '% speed.');
+    'Each escape: <b class="good">+' + SET.vpFinish + ' VP</b>, +' + (SET.ptsFinish + (tot.scholar || 0)) +
+    ' points, a full heal, <b>an item</b>, and a permanent +' + SET.lapBonus + '% speed.');
 
   /* live numbers, so a curve is never something you have to take on trust */
-  const spd = RULES.speed(SET, r.up, r.lap);
+  const spd = RULES.speed(SET, tot, r.lap);
   const st = [
     ['Speed', Math.round(spd) + ' px/s',
-      'lv ' + r.up.speed + ' · eff ' + RULES.speedEff(r.up.speed).toFixed(1)],
-    ['Max HP', r.mh, '+' + Math.round(26 * RULES.eff(r.up.hp)) + ' bought'],
-    ['Regen', RULES.regenPerSec(r.up).toFixed(1) + '/s', 'always'],
-    ['Out of combat', '+' + RULES.oocPerSec(r.up).toFixed(1) + '/s', 'after ' + (RULES.OOC_MS / 1000) + 's'],
-    ['Barrier', Math.round(r.bm), '+' + RULES.barrierRegen(r.up).toFixed(1) + '/s out of combat'],
-    ['Healing power', '×' + RULES.healPow(r.up).toFixed(2), 'all sources'],
-    ['Resist · bullet', Math.round(100 * RULES.resistPct(r.up, 'bullet')) + '%', 'armor + bullet'],
-    ['Resist · fire', Math.round(100 * RULES.resistPct(r.up, 'fire')) + '%', 'armor + fire'],
-    ['Resist · energy', Math.round(100 * RULES.resistPct(r.up, 'energy')) + '%', 'armor + energy'],
-    ['Trap resist', Math.round(100 * (1 - RULES.trapMul(r.up))) + '%', 'damage traps only'],
-    ['Bullets missed', Math.round(100 * RULES.evadeChance(r.up)) + '%',
+      'lv ' + tot.speed + ' · eff ' + RULES.speedEff(tot.speed).toFixed(1)],
+    ['Max HP', r.mh, '+' + Math.round(26 * RULES.eff(tot.hp)) + ' from levels'],
+    ['Regen', RULES.regenPerSec(tot).toFixed(1) + '/s', 'always'],
+    ['Out of combat', '+' + RULES.oocPerSec(tot).toFixed(1) + '/s', 'after ' + (RULES.OOC_MS / 1000) + 's'],
+    ['Barrier', Math.round(r.bm), '+' + RULES.barrierRegen(tot).toFixed(1) + '/s out of combat'],
+    ['Healing power', '×' + RULES.healPow(tot).toFixed(2), 'all sources'],
+    ['Resist · bullet', Math.round(100 * RULES.resistPct(tot, 'bullet')) + '%', 'armor + bullet'],
+    ['Resist · fire', Math.round(100 * RULES.resistPct(tot, 'fire')) + '%', 'armor + fire'],
+    ['Resist · energy', Math.round(100 * RULES.resistPct(tot, 'energy')) + '%', 'armor + energy'],
+    ['Trap resist', Math.round(100 * (1 - RULES.trapMul(tot))) + '%', 'damage traps only'],
+    ['Dodge', Math.round(100 * RULES.dodgeChance(tot)) + '%',
       'ceiling ' + Math.round(100 * RULES.DODGE_MAX) + '%'],
-    ['  · dodged', Math.round(100 * RULES.dodgeChance(r.up)) + '%', 'straight through'],
-    ['  · deflected', Math.round(100 * RULES.deflectChance(r.up)) + '%', 'sent back'],
-    ['Cooldowns', '×' + RULES.hasteMul(r.up).toFixed(2), 'haste'],
+    ['Deflection', Math.round(100 * RULES.deflectChance(tot)) + '%',
+      'ceiling ' + Math.round(100 * RULES.DODGE_MAX) + '%'],
+    ['Bullets missed', Math.round(100 * RULES.evadeChance(tot)) + '%', 'the two together'],
+    ['Cooldowns', '×' + RULES.hasteMul(tot).toFixed(2), 'haste'],
   ];
   setHtml(el.statBox, st.map(s =>
     '<div class="strow"><span>' + s[0] + '</span><b>' + s[1] + '</b><small>' + s[2] + '</small></div>').join(''));
@@ -761,7 +882,7 @@ function updateRunner() {
       's of the chosen stat raised to the power of <b>' + RULES.ULT_EXP + '</b>.'
     : (chosen ? '<b style="color:' + chosen.color + '">' + chosen.icon + ' ' + esc(chosen.name) + '</b> · ×' +
         RULES.ultMul(r.ul, ultLv).toFixed(1) + ' for ' + (RULES.ULT_DUR / 1000) + 's, every ' +
-        Math.round(RULES.ultCd(r.up) / 1000) + 's. Press <span class="kbd">G</span>.'
+        Math.round(RULES.ultCd(tot) / 1000) + 's. Press <span class="kbd">G</span>.'
       : '<span class="warn">Pick which SUPER BUFF goes in the slot.</span>'));
   for (const b of el.ultBtns || []) {
     const k = b.dataset.ult;
@@ -787,7 +908,7 @@ function updateRunner() {
     const k = b.dataset.up, lv = r.up[k], u = D.UPGRADES[k];
     const cost = RULES.upgradeCost(SET, u, lv);
     const blocked = u.kind === 'ability' && lv === 0 && owned >= r.sx;
-    setHtml(b.querySelector('.lv'), lvLabel(k, u.kind, lv));
+    setHtml(b.querySelector('.lv'), lvLabel(k, u.kind, lv, (r.gu && r.gu[k]) || 0));
     b.querySelector('.cost').textContent = blocked ? 'no slot' : cost + ' pt';
     b.querySelector('.cost').style.color = blocked ? 'var(--warn)' : '';
     b.disabled = blocked || r.pt < cost;
@@ -891,7 +1012,7 @@ function updateHud() {
       s.el.classList.toggle('armed', toolKind === 'aim' && toolType === s.k);
     } else if (r && s.ult) {
       const lv = r.up.ultimate || 0, chosen = r.ul && RULES.ULTS[r.ul];
-      const full = r.uf || RULES.ultCd(r.up);
+      const full = r.uf || RULES.ultCd(totOf(r));
       s.key.textContent = 'G';
       s.ico.textContent = chosen ? chosen.icon : '★';
       s.nm.textContent = chosen ? chosen.name : 'Ultimate';
@@ -925,7 +1046,7 @@ function updateHud() {
         /* The length this cooldown actually started at, straight from the
            server -- not recomputed from the current Haste, which made the
            wedge jump if you bought Haste while something was cooling down. */
-        const full = (r.cf && r.cf[s.k]) || RULES.ability[s.k](lv).cd * RULES.hasteMul(r.up);
+        const full = (r.cf && r.cf[s.k]) || RULES.ability[s.k](lv).cd * RULES.hasteMul(totOf(r));
         s.cost.textContent = 'L' + lv + (lv > RULES.AB_CAP ? '▾' : '');
         s.cost.style.color = lv > RULES.AB_CAP ? 'var(--warn)' : 'var(--muted)';
         s.sweep.style.setProperty('--deg', (cd > 0 ? 360 * Math.min(1, cd / full) : 0) + 'deg');
@@ -1590,6 +1711,57 @@ function drawTrap(tw, def, dyn, cx, cy, col, now, form) {
   }
 }
 
+/* What a runner is wearing, drawn on the blob itself: a dome for the helmet,
+   a band for the chestplate, a pair of pads for the boots, each in its rarity
+   colour. A legendary piece gets a light bloom so it reads across the board. */
+function drawGear(r, d, now, alpha) {
+  if (!r.eq) return;
+  const R = D.RUNNER_R;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineCap = 'round';
+  for (let pass = 0; pass < 2; pass++) {
+    /* second pass is the legendary bloom, drawn additively over the top */
+    if (pass === 1) {
+      if (!r.eq.some(x => x === 3)) break;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = alpha * (0.35 + 0.25 * Math.sin(now / 200));
+    }
+    const wide = pass === 1 ? 3 : 0;
+    if (r.eq[2] >= 0 && (pass === 0 || r.eq[2] === 3)) {          /* boots */
+      ctx.fillStyle = rarityOf(r.eq[2]).color;
+      for (const sx of [-1, 1]) {
+        ctx.beginPath();
+        ctx.ellipse(d.x + sx * R * 0.5, d.y + R * 0.8, 4.4 + wide, 2.6 + wide * 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (r.eq[1] >= 0 && (pass === 0 || r.eq[1] === 3)) {          /* chestplate */
+      ctx.fillStyle = rarityOf(r.eq[1]).color;
+      const w = R * 1.55 + wide, h = 4.5 + wide;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(d.x - w / 2, d.y + 1 - h / 2, w, h, h / 2);
+      else ctx.rect(d.x - w / 2, d.y + 1 - h / 2, w, h);
+      ctx.fill();
+    }
+    if (r.eq[0] >= 0 && (pass === 0 || r.eq[0] === 3)) {          /* helmet */
+      ctx.strokeStyle = rarityOf(r.eq[0]).color;
+      ctx.lineWidth = 4 + wide;
+      ctx.beginPath();
+      ctx.arc(d.x, d.y - 0.5, R + 1, Math.PI * 1.13, Math.PI * 1.87);
+      ctx.stroke();
+      if (r.eq[0] >= 2) {                                          /* epic and up: a crest */
+        ctx.beginPath();
+        ctx.moveTo(d.x, d.y - R - 2);
+        ctx.lineTo(d.x, d.y - R - 6 - (r.eq[0] === 3 ? 2 : 0));
+        ctx.lineWidth = 2.5 + wide;
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function drawRunner(r, d, now, dt) {
   const R = D.RUNNER_R, col = runnerColor(r.id);
   if (r.d) {
@@ -1621,6 +1793,7 @@ function drawRunner(r, d, now, dt) {
   ctx.beginPath(); ctx.arc(d.x + r.fx * 4 - r.fy * 4, d.y + r.fy * 4 + r.fx * 4, 2, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.arc(d.x + r.fx * 4 + r.fy * 4, d.y + r.fy * 4 - r.fx * 4, 2, 0, Math.PI * 2); ctx.fill();
   ctx.globalAlpha = 1;
+  drawGear(r, d, now, r.gh ? 0.4 : r.fk ? 0.85 : 1);
 
   if (r.ba > 0) {
     ctx.save(); ctx.globalCompositeOperation = 'lighter';

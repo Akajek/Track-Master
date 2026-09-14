@@ -34,6 +34,7 @@ function client(name, role, room) {
       else if (m.t === 'set') c.set = m.set;
       else if (m.t === 'tw') c.towers = m.tw;
       else if (m.t === 'ul') c.ul = m;
+      else if (m.t === 'inv') c.inv = m;
       else if (m.t === 's') { c.state = m; if (c.welcome && !c.ready) { c.ready = true; resolve(c); } }
       else if (m.t === 'msg') c.msgs.push(m.text);
       else if (m.t === 'role') c.welcome.role = m.role;
@@ -151,7 +152,7 @@ async function main() {
      must not rebuild its DOM from the gold total, or the button you are
      clicking gets destroyed between mousedown and click. */
   const panelBody = gameSrc.slice(gameSrc.indexOf('function updateTowerPanel('),
-                                  gameSrc.indexOf('function updateRunner('));
+                                  gameSrc.indexOf('/* ================================================================== gear */'));
   assert.ok(!/S\.gold/.test(panelBody.slice(0, panelBody.indexOf('function refreshTowerPanel'))),
     'updateTowerPanel/buildTowerPanel must not key off the gold total');
   assert.ok(/panelFor !== tw\.id/.test(panelBody),
@@ -177,10 +178,12 @@ async function main() {
      runner standing behind you. */
   assert.ok(/pr\.dead = 1/.test(srvEarly) && /if \(pr\.dead\) continue;/.test(srvEarly),
     'a deflected projectile is marked spent and stops colliding');
-  const perFrame = ['updateSide', 'updateMM', 'refreshTowerPanel', 'updateRunner', 'updateHud'];
+  const perFrame = ['updateSide', 'updateMM', 'refreshTowerPanel', 'updateGear', 'updateRunner', 'updateHud'];
   const bounds = {
     updateSide: 'function updateMM(', updateMM: 'function updateTowerPanel(',
-    refreshTowerPanel: 'function lvLabel(', updateRunner: 'function setTool(',
+    refreshTowerPanel: '/* ================================================================== gear */',
+    updateGear: '/* ------------------------------------------------------------ runner update */',
+    updateRunner: 'function setTool(',
     updateHud: '/* ================================================================ canvas io */',
   };
   for (const fn of perFrame) {
@@ -394,20 +397,18 @@ async function main() {
   for (const lv of [1, 5, 10, 20, 50, 200]) {
     assert.ok(RULES.dodgeChance({ dodge: lv }) < RULES.DODGE_MAX, 'dodge at ' + lv + ' stays under the ceiling');
     assert.ok(RULES.deflectChance({ deflect: lv }) < RULES.DODGE_MAX, 'deflection at ' + lv + ' does too');
-    /* The ceiling is on NOT BEING HIT, not on each upgrade separately: two
-       independent 35% rolls come out at 58%, which is not a 35% ceiling. */
-    assert.ok(RULES.evadeChance({ dodge: lv, deflect: lv }) <= RULES.DODGE_MAX + 1e-9,
-      'dodge and deflection together stay under the ceiling at level ' + lv);
-    const d = RULES.dodgeChance({ dodge: lv, deflect: lv });
-    const f = RULES.deflectChance({ dodge: lv, deflect: lv });
-    assert.ok(Math.abs((d + f) - RULES.evadeChance({ dodge: lv, deflect: lv })) < 1e-9,
-      'the two flavours are a split of the one chance, not two chances');
+    /* The ceiling is per upgrade, and the two STACK -- buying both is meant to
+       be better than buying either, which is the whole point of the stats. */
+    assert.ok(RULES.evadeChance({ dodge: lv, deflect: lv }) >
+              RULES.dodgeChance({ dodge: lv }) + 1e-9,
+      'dodge and deflection stack at level ' + lv);
+    assert.ok(RULES.evadeChance({ dodge: lv, deflect: lv }) < 1,
+      'and stacking still cannot make you untouchable');
   }
-  assert.ok(RULES.evadeChance({ dodge: 12 }) > 0.25, 'but a heavy investment still gets most of the way there');
-  assert.ok(RULES.evadeChance({ dodge: 6, deflect: 6 }) > RULES.evadeChance({ dodge: 6 }),
-    'and levels in either upgrade push the same curve');
+  assert.ok(RULES.dodgeChance({ dodge: 12 }) > 0.25, 'but a heavy investment still gets most of the way there');
   assert.strictEqual(RULES.deflectChance({ dodge: 9, deflect: 0 }), 0,
-    'with nothing in Deflection every miss is a dodge');
+    'Deflection does nothing unbought, however much Dodge you have');
+  assert.strictEqual(RULES.evadeChance({ dodge: 0, deflect: 0 }), 0, 'and neither does nothing at all');
   const gameSrcDr = fs.readFileSync(path.join(__dirname, '..', 'public', 'game.js'), 'utf8');
   assert.ok(/function lvLabel/.test(gameSrcDr) && /eff /.test(gameSrcDr),
     'the client shows the effective level, not just the raw one');
@@ -1033,6 +1034,116 @@ async function main() {
   assert.ok(RULES.oocPerSec({ oocheal: 4 }) > RULES.regenPerSec({ regen: 4 }),
     'out of combat healing scales better than regen, which is the trade');
 
+  /* ---- gear: three slots, one item each, rolled by escaping ------------- */
+  /* An item grants LEVELS in ordinary upgrades, so it rides the same curves as
+     anything bought -- and the prices you pay never move, because those read
+     the levels you actually bought. */
+  for (const slot of RULES.EQUIP_SLOTS) {
+    assert.ok(RULES.SLOT_POOL[slot].length >= RULES.RARITY[RULES.RARITY.length - 1].rolls,
+      slot + ' has enough stats in its pool to fill a legendary');
+    for (const k of RULES.SLOT_POOL[slot]) {
+      assert.ok(D.UPGRADES[k], slot + ' rolls "' + k + '", which must be a real upgrade');
+      assert.strictEqual(D.UPGRADES[k].kind, 'passive',
+        slot + ' rolls "' + k + '", and gear may only lend passive levels');
+    }
+  }
+  let oddsTotal = 0;
+  for (const rr of RULES.RARITY) oddsTotal += rr.odds;
+  assert.strictEqual(oddsTotal, 100, 'the four rarities account for every roll');
+  assert.deepStrictEqual(RULES.RARITY.map(r => r.odds), [55, 25, 15, 5],
+    'common 55, rare 25, epic 15, legendary 5, as asked');
+  const buckets = [0, 0, 0, 0];
+  for (let roll = 0; roll < 100; roll++) buckets[RULES.rarityFromRoll(roll)]++;
+  assert.deepStrictEqual(buckets, [55, 25, 15, 5], 'and the roll actually lands in those proportions');
+  for (let i = 1; i < RULES.RARITY.length; i++) {
+    assert.ok(RULES.RARITY[i].rolls >= RULES.RARITY[i - 1].rolls, 'rarer items roll more stats');
+    assert.ok(RULES.RARITY[i].hi > RULES.RARITY[i - 1].hi, 'and bigger ones');
+    assert.ok(RULES.RARITY[i].color, RULES.RARITY[i].key + ' has a colour');
+  }
+
+  /* escaping the course pays out */
+  await park(mm, run);
+  const bag0 = (run.inv && run.inv.bag.length) || 0;
+  await runRight(run, () => run.inv && run.inv.bag.length > bag0, 'escaping drops an item', 12000);
+  const drop = run.inv.bag[run.inv.bag.length - 1];
+  assert.ok(RULES.EQUIP_SLOTS.indexOf(drop.slot) >= 0, 'the drop is for one of the three slots');
+  assert.ok(drop.r >= 0 && drop.r < RULES.RARITY.length, 'and has a rarity');
+  assert.ok(Object.keys(drop.stats).length >= 1, 'and carries at least one stat');
+  assert.strictEqual(Object.keys(drop.stats).length, RULES.RARITY[drop.r].rolls,
+    'with as many stats as its rarity rolls');
+  for (const k in drop.stats) {
+    assert.ok(RULES.SLOT_POOL[drop.slot].indexOf(k) >= 0, 'every stat comes from its slot pool');
+    assert.ok(drop.stats[k] >= RULES.RARITY[drop.r].lo && drop.stats[k] <= RULES.RARITY[drop.r].hi,
+      'and is inside the range for its rarity');
+  }
+  assert.ok(/of /.test(drop.name), 'and it is named after what it does (' + drop.name + ')');
+  assert.ok(run.inv.bag.length <= RULES.BAG_MAX, 'the bag never grows past its cap');
+  assert.ok(new Set(run.inv.bag.map(i => i.id)).size === run.inv.bag.length,
+    'and every item in it has its own id');
+
+  /* a hand-made item, so the rest of this is about the plumbing and not luck */
+  const rp = [...room.players.values()].find(x => x.id === run.welcome.id);
+  const CHEST = { id: 9001, slot: 'chest', r: 2, stats: { hp: 6 }, name: 'Runed Plate of Vitality' };
+  const CHEST2 = { id: 9002, slot: 'chest', r: 3, stats: { hp: 2, armor: 4 }, name: 'Radiant Aegis of Armor' };
+  const BOOTS = { id: 9003, slot: 'boots', r: 3, stats: { speed: 8 }, name: 'Radiant Striders of Speed' };
+  rp.bag.push(CHEST, CHEST2, BOOTS);
+  rp.invDirty = true;
+  await waitFor(() => run.inv.bag.some(i => i.id === 9003), 'the test items reached the bag');
+
+  await park(mm, run);
+  const mhBare = me(run).mh, boughtHp = me(run).up.hp;
+  run.send({ t: 'equip', id: 9001 });
+  await waitFor(() => (me(run).gu || {}).hp === 6, 'the chestplate lends its levels');
+  assert.ok(me(run).mh > mhBare, 'and the server really does give the extra health (' +
+    mhBare + ' -> ' + me(run).mh + ')');
+  /* the number the sidebar works out and the number the server is actually
+     using have to be the same number, or gear is lying on the tin */
+  assert.strictEqual(me(run).mh,
+    Math.round(RULES.maxHp(mm.set, RULES.totalLevels(me(run).up, me(run).gu), me(run).lap)),
+    'and the shared rules reproduce it exactly from the levels in the snapshot');
+  assert.strictEqual(me(run).up.hp, boughtHp, 'without touching what you actually bought');
+  assert.strictEqual(RULES.upgradeCost(mm.set, D.UPGRADES.hp, me(run).up.hp),
+    RULES.upgradeCost(mm.set, D.UPGRADES.hp, boughtHp),
+    'so gear never changes what the next level costs');
+  assert.strictEqual(me(run).eq[1], 2, 'and everyone can see the rarity of what you are wearing');
+
+  /* one item per slot: a second chestplate replaces the first */
+  run.send({ t: 'equip', id: 9002 });
+  await waitFor(() => (me(run).gu || {}).armor === 4, 'the second chestplate goes on');
+  assert.strictEqual(me(run).gu.hp, 2, 'and the first one comes off, rather than stacking with it');
+  assert.strictEqual(me(run).eq[1], 3, 'the visible rarity follows what is worn');
+
+  /* the three slots are independent */
+  run.send({ t: 'equip', id: 9003 });
+  await waitFor(() => (me(run).gu || {}).speed === 8, 'boots go on alongside the chestplate');
+  assert.strictEqual(me(run).gu.armor, 4, 'and the chestplate stays on');
+  assert.deepStrictEqual(me(run).eq, [-1, 3, 3], 'helmet empty, chest and boots worn');
+  const tot = RULES.totalLevels(me(run).up, me(run).gu);
+  assert.ok(RULES.speed(mm.set, tot, me(run).lap) > RULES.speed(mm.set, me(run).up, me(run).lap),
+    'and the lent levels ride the ordinary speed curve');
+
+  /* gear is swapped at a START tile and nowhere else */
+  run.msgs.length = 0;
+  await runRight(run, () => !me(run).st0, 'the runner steps off the start tile', 6000);
+  run.send({ t: 'unequip', slot: 'boots' });
+  await sleep(250);
+  assert.strictEqual(me(run).gu.speed, 8, 'gear cannot be changed away from a START tile');
+  assert.ok(run.msgs.some(t => /standing on a START tile/.test(t)), 'and the runner is told why');
+  await park(mm, run);
+  assert.strictEqual(me(run).st0, 1, 'back on the start tile');
+  run.send({ t: 'unequip', slot: 'boots' });
+  await waitFor(() => !(me(run).gu || {}).speed, 'and now the boots come off');
+  assert.strictEqual(me(run).eq[2], -1, 'which everyone can see');
+
+  /* discarding takes it off and throws it away */
+  run.send({ t: 'discard', id: 9002 });
+  await waitFor(() => !run.inv.bag.some(i => i.id === 9002), 'the worn chestplate is discarded');
+  assert.strictEqual(me(run).eq[1], -1, 'and it comes off as it goes');
+  assert.ok(!(me(run).gu || {}).armor, 'and stops lending its levels');
+  run.send({ t: 'discard', id: 9001 });
+  run.send({ t: 'discard', id: 9003 });
+  await waitFor(() => !run.inv.bag.some(i => i.id === 9001 || i.id === 9003), 'test items cleaned up');
+
   /* ---- the ghost nerf ----------------------------------------------------- */
   /* It used to be invulnerability with no counterplay. Now it hides you from
      towers, it breaks when a trap bites, and it is worth nothing on the END. */
@@ -1091,6 +1202,11 @@ async function main() {
   assert.strictEqual(run.state.edit, 1, 'and the Mastermind gets the board back in edit mode');
   assert.strictEqual(mm.state.gold, mm.set.startGold, 'a new round starts from the configured bankroll');
   assert.ok(me(run).up.speed >= 10, 'runner levels survive the new round');
+  /* Gear is earned the hard way, so a new round must not confiscate it. */
+  assert.ok(run.inv.bag.length > 0, 'and so does everything in the bag (' + run.inv.bag.length + ' items)');
+  const wornAfter = RULES.EQUIP_SLOTS.filter(sl => run.inv.equip[sl]).length;
+  assert.strictEqual(me(run).eq.filter(x => x >= 0).length, wornAfter,
+    'and whatever was worn is still worn');
 
   /* ---- every sound the client asks for exists ---------------------------- */
   const audio = fs.readFileSync(path.join(__dirname, '..', 'public', 'audio.js'), 'utf8');
@@ -1117,7 +1233,7 @@ async function main() {
      variable would quietly stop being checked. Name the ones that matter. */
   for (const k of ['hit', 'die', 'fin', 'boom', 'dodge', 'deflect', 'barrierhit', 'barrierbreak',
                    'nova', 'ult', 'tunnelin', 'tunnelout', 'flicker', 'escapestart', 'escapelost',
-                   'unlockpt', 'unlocked', 'slot', 'jolt', 'morph']) {
+                   'unlockpt', 'unlocked', 'slot', 'jolt', 'morph', 'loot', 'gear']) {
     assert.ok(kinds.has(k), 'event "' + k + '" must be emitted as a plain literal so it stays checkable');
   }
 

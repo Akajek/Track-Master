@@ -194,8 +194,8 @@ const UPGRADES = {
   resFire:   { name: 'Fire Resist',  kind: 'passive', desc: 'Less damage from fire, on top of Armor' },
   resEnergy: { name: 'Energy Resist', kind: 'passive', desc: 'Less damage from energy, on top of Armor' },
   trapres:   { name: 'Trap Resist',  kind: 'passive', desc: 'Less damage from damaging traps only' },
-  dodge:     { name: 'Dodge',        kind: 'passive', desc: 'Bullets pass straight through you. Shares a 35% ceiling with Deflection' },
-  deflect:   { name: 'Deflection',   kind: 'passive', desc: 'Bullets are batted back the way they came. Shares Dodge’s 35% ceiling' },
+  dodge:     { name: 'Dodge',        kind: 'passive', desc: 'Chance a bullet passes straight through you (up to 35%)' },
+  deflect:   { name: 'Deflection',   kind: 'passive', desc: 'Chance to bat a bullet back the way it came (up to 35%, stacks with Dodge)' },
   grip:      { name: 'Grip',         kind: 'passive', desc: 'Resist slows, glue and steep ground' },
   haste:     { name: 'Haste',        kind: 'passive', desc: 'Shorter ability cooldowns' },
   momentum:  { name: 'Momentum',     kind: 'passive', desc: 'Speeds up while you avoid damage' },
@@ -244,12 +244,12 @@ const twCd    = tw => RULES.cooldown(BUILD[tw.type], tw.up);
 const twForm  = tw => RULES.form(tw.up);
 const twProj  = tw => RULES.proj(BUILD[tw.type], tw.up);
 
-const rSpeed   = (room, p) => RULES.speed(room.set, p.up, p.laps);
-const rMaxHp   = (room, p) => RULES.maxHp(room.set, p.up, p.laps);
-const rGrip    = p => RULES.gripMul(p.up);
-const rHaste   = p => RULES.hasteMul(p.up);
-const rRespawn = (room, p) => RULES.respawnMs(room.set, p.up);
-const rMomentum = (p, now) => RULES.momentumMul(p.up, now - p.lastHurt);
+const rSpeed   = (room, p) => RULES.speed(room.set, p.tot, p.laps);
+const rMaxHp   = (room, p) => RULES.maxHp(room.set, p.tot, p.laps);
+const rGrip    = p => RULES.gripMul(p.tot);
+const rHaste   = p => RULES.hasteMul(p.tot);
+const rRespawn = (room, p) => RULES.respawnMs(room.set, p.tot);
+const rMomentum = (p, now) => RULES.momentumMul(p.tot, now - p.lastHurt);
 const ABILITY = RULES.ability;
 
 /* The ultimate, if it is running and it is the one that touches this stat. */
@@ -280,7 +280,7 @@ function makeRoom(code) {
     /* the unlock economy: damage dealt buys points, points buy buildings */
     dmgDone: 0, unlockPts: 0, unlockEarned: 0, unlocked: new Set(UNLOCK_START), unlockDirty: false,
     tunnelCache: null,
-    nextTid: 1, nextDid: 1, gridDirty: false, towersDirty: false,
+    nextTid: 1, nextDid: 1, nextItem: 1, gridDirty: false, towersDirty: false,
   };
   room.tiles = new Array(room.set.gw * room.set.gh).fill(T.EMPTY);
   room.gold = room.set.startGold;
@@ -488,6 +488,64 @@ function hidden(p, now) {
   return p.ghostUntil > now && p.flickerUntil <= now && !p.onEnd;
 }
 
+/* --------------------------------------------------------------- equipment */
+/* Escaping the course pays out a piece of gear. An item is a slot, a rarity,
+   and a handful of LEVELS in ordinary upgrades -- so it feeds the same curves
+   as anything the runner bought, and a helmet that says "+4 Haste" means
+   exactly the four levels of Haste it says. */
+function rollItem(room) {
+  const r = RULES.rarityFromRoll(Math.random() * 100);
+  const def = RULES.RARITY[r];
+  const slot = RULES.EQUIP_SLOTS[(Math.random() * RULES.EQUIP_SLOTS.length) | 0];
+  const pool = RULES.SLOT_POOL[slot].slice();
+  const stats = {};
+  const n = Math.min(def.rolls, pool.length);
+  for (let i = 0; i < n; i++) {
+    const key = pool.splice((Math.random() * pool.length) | 0, 1)[0];
+    stats[key] = def.lo + ((Math.random() * (def.hi - def.lo + 1)) | 0);
+  }
+  const item = { id: room.nextItem++, slot, r, stats, name: '' };
+  const top = RULES.itemTopStat(item);
+  item.name = RULES.RARITY_WORD[r] + ' ' + RULES.SLOT_BASE[slot][r] +
+    ' of ' + UPGRADES[top].name;
+  return item;
+}
+
+function itemById(p, id) {
+  return p.bag.find(i => i.id === id) || null;
+}
+/* The levels the equipped gear is lending, summed across the three slots. */
+function gearLevels(p) {
+  const g = {};
+  for (const slot of RULES.EQUIP_SLOTS) {
+    const it = itemById(p, p.equip[slot]);
+    if (!it) continue;
+    for (const k in it.stats) g[k] = (g[k] || 0) + it.stats[k];
+  }
+  return g;
+}
+/* Anything that changes what a runner has bought or is wearing goes through
+   here, so p.tot -- the levels every stat formula reads -- is never stale. */
+function recalcRunner(room, p) {
+  p.gear = gearLevels(p);
+  p.tot = RULES.totalLevels(p.up, p.gear);
+  p.maxHp = rMaxHp(room, p);
+  p.barrierMax = RULES.barrierMax(room.set, p.tot);
+  if (p.hp > p.maxHp) p.hp = p.maxHp;
+  if (p.barrier > p.barrierMax) p.barrier = p.barrierMax;
+  /* What everyone else can see you wearing, worked out once here rather than
+     scanned out of the bag for every runner on every snapshot. */
+  p.eqR = RULES.EQUIP_SLOTS.map(sl => {
+    const it = itemById(p, p.equip[sl]);
+    return it ? it.r : -1;
+  });
+}
+/* Gear is swapped at a START tile and nowhere else, so a runner cannot
+   re-kit themselves the moment a mortar shell lands on them. */
+function atStart(room, p) {
+  return tileAt(room, Math.floor(p.x / CELL), Math.floor(p.y / CELL)) === T.START;
+}
+
 /* --------------------------------------------------------------- unlocking */
 const UNLOCK_MAX = UNLOCKABLE.length + 4;
 function addUnlockDamage(room, amt) {
@@ -527,10 +585,10 @@ function damage(room, p, amt, now, src, el, opts) {
   if (p.dead || p.invUntil > now || !(amt > 0)) return 0;
   opts = opts || {};
 
-  amt *= RULES.armorMul(p.up, el);
-  if (opts.trap) amt *= RULES.trapMul(p.up);
+  amt *= RULES.armorMul(p.tot, el);
+  if (opts.trap) amt *= RULES.trapMul(p.tot);
   if (p.onEnd) amt *= 1 - (room.set.endResist || 0) / 100;
-  if (p.up.tough && p.hp / p.maxHp < 0.3) amt *= RULES.toughMul(p.up);
+  if (p.tot.tough && p.hp / p.maxHp < 0.3) amt *= RULES.toughMul(p.tot);
   const iron = ultOn(p, 'armor', now);
   if (iron) amt /= iron;
 
@@ -572,19 +630,18 @@ function damage(room, p, amt, now, src, el, opts) {
    step out of the way of, which is why the Laser says so on the tin. */
 function evade(room, p, now, el) {
   if (!p || p.dead || el !== 'bullet') return null;
-  /* One roll against one shared ceiling, then pick the flavour -- not two
-     independent rolls, which would stack past the ceiling. */
-  if (Math.random() >= RULES.evadeChance(p.up)) return null;
+  /* Two rolls, each against its own ceiling, and they stack: a runner who has
+     bought both should be harder to hit than one who bought either. */
   const x = Math.round(p.x), y = Math.round(p.y);
-  /* Written out rather than built from a variable so that every event kind the
-     server can emit stays greppable: the test suite reads these literals to
-     check that the effects and the sounds cover all of them. */
-  if (Math.random() < RULES.deflectShare(p.up)) {
+  if (Math.random() < RULES.deflectChance(p.tot)) {
     ev(room, { k: 'deflect', x, y, id: p.id });
     return 'deflect';
   }
-  ev(room, { k: 'dodge', x, y, id: p.id });
-  return 'dodge';
+  if (Math.random() < RULES.dodgeChance(p.tot)) {
+    ev(room, { k: 'dodge', x, y, id: p.id });
+    return 'dodge';
+  }
+  return null;
 }
 
 function kill(room, p, now) {
@@ -600,12 +657,13 @@ function kill(room, p, now) {
 
 function finish(room, p, now) {
   p.finishes++; p.laps++;
-  p.points += room.set.ptsFinish + p.up.scholar;
+  p.points += room.set.ptsFinish + p.tot.scholar;
+  grantLoot(room, p);
   room.vpRun += room.set.vpFinish;
   room.gold += room.set.goldFinish;
   p.maxHp = rMaxHp(room, p);
   p.hp = p.maxHp;
-  p.barrier = RULES.barrierMax(room.set, p.up);
+  p.barrier = RULES.barrierMax(room.set, p.tot);
   p.shield = Math.max(p.shield, 25);
   p.endAt = 0;
   ev(room, { k: 'fin', x: Math.round(p.x), y: Math.round(p.y), n: p.name, id: p.id });
@@ -613,6 +671,29 @@ function finish(room, p, now) {
   ev(room, { k: 'lap', x: Math.round(p.x), y: Math.round(p.y), n: p.laps });
   checkWin(room, now);
   if (!room.winner) placeAtStart(room, p, now);
+}
+
+/* The reward for getting out alive, on top of the points and the victory
+   point: one rolled item, 55/25/15/5 across the four rarities. */
+function grantLoot(room, p) {
+  if (p.bag.length >= RULES.BAG_MAX) {
+    /* Say it once, not on every single lap: a runner who is happy with a full
+       bag should not be nagged for the rest of the game. */
+    if (!p.bagWarned) {
+      p.bagWarned = true;
+      note(p, 'Your bag is full — discard something to make room for loot.', 'warn');
+    }
+    return;
+  }
+  p.bagWarned = false;
+  const it = rollItem(room);
+  p.bag.push(it);
+  p.invDirty = true;
+  const rar = RULES.RARITY[it.r];
+  ev(room, { k: 'loot', x: Math.round(p.x), y: Math.round(p.y), id: p.id,
+    n: it.name, c: rar.color, r: it.r });
+  note(p, 'Found: ' + it.name + ' (' + rar.name + ').', it.r >= 2 ? 'good' : 'info');
+  if (it.r >= 3) shout(room, p.name + ' pulled a LEGENDARY: ' + it.name + '!', 'warn');
 }
 
 function checkWin(room, now) {
@@ -640,7 +721,7 @@ function newRound(room, now) {
   room.roundStart = now;
   for (const p of runners(room)) {
     p.dead = false; p.hp = p.maxHp; p.shield = 0; p.ultUntil = 0; p.ultCd = 0;
-    p.barrier = RULES.barrierMax(room.set, p.up);
+    p.barrier = RULES.barrierMax(room.set, p.tot);
     placeAtStart(room, p, now);
   }
   shout(room, 'New round. The Mastermind is setting up.', 'info');
@@ -735,7 +816,7 @@ function tick(room, now) {
   /* ------------------------------------------------------------- runners */
   for (const p of rs) {
     p.maxHp = rMaxHp(room, p);
-    p.barrierMax = RULES.barrierMax(S, p.up);
+    p.barrierMax = RULES.barrierMax(S, p.tot);
     const aegis = ultOn(p, 'barrier', now);
     if (aegis) p.barrierMax *= aegis;
     if (p.hp > p.maxHp) p.hp = p.maxHp;
@@ -807,13 +888,13 @@ function tick(room, now) {
        and the barrier do wait, which is what makes them different. */
     const calm = now - p.lastHurt;
     if (p.hp < p.maxHp) {
-      let hps = RULES.regenPerSec(p.up);
-      if (calm > RULES.OOC_MS) hps += RULES.oocPerSec(p.up);
+      let hps = RULES.regenPerSec(p.tot);
+      if (calm > RULES.OOC_MS) hps += RULES.oocPerSec(p.tot);
       if (hps > 0) healRunner(room, p, hps * dt, now, true);
     }
     if (p.barrier < p.barrierMax && calm > RULES.BARRIER_MS) {
       const was = p.barrier;
-      p.barrier = Math.min(p.barrierMax, p.barrier + RULES.barrierRegen(p.up) * dt);
+      p.barrier = Math.min(p.barrierMax, p.barrier + RULES.barrierRegen(p.tot) * dt);
       if (was <= 0.01 && p.barrier > 0.01) ev(room, { k: 'barrierup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
     }
     if (p.shieldUntil && now > p.shieldUntil && p.shield > 0) { p.shield = 0; }
@@ -1085,6 +1166,11 @@ function towersMsg(room) {
   return JSON.stringify({ t: 'tw', tw });
 }
 function setMsg(room) { return JSON.stringify({ t: 'set', set: room.set }); }
+/* The bag only goes to its owner, and only when it changes: it is far too
+   big to ride along with twenty snapshots a second. */
+function invMsg(p) {
+  return JSON.stringify({ t: 'inv', bag: p.bag, equip: p.equip });
+}
 function unlockMsg(room) {
   return JSON.stringify({ t: 'ul', have: [...room.unlocked], pts: room.unlockPts, up: room.mmUp });
 }
@@ -1094,10 +1180,13 @@ function stateMsg(room, now) {
     id: p.id, n: p.name, x: Math.round(p.x), y: Math.round(p.y),
     hp: Math.round(p.hp), mh: Math.round(p.maxHp), sh: Math.round(p.shield),
     ba: Math.round(p.barrier), bm: Math.round(p.barrierMax),
-    d: p.dead ? 1 : 0, pt: p.points, fin: p.finishes, dth: p.deaths, lap: p.laps, up: p.up,
+    d: p.dead ? 1 : 0, pt: p.points, fin: p.finishes, dth: p.deaths, lap: p.laps,
+    up: p.up, gu: p.gear,
+    eq: p.eqR,      /* one rarity per slot, -1 for empty */
+    st0: atStart(room, p) ? 1 : 0,
     cd: abilityCds(p, now), cf: p.cdFull,
     sx: p.slots, ul: p.ult || '', uc: Math.max(0, p.ultCd - now), uu: Math.max(0, p.ultUntil - now),
-    uf: Math.round(p.ultCdFull || RULES.ultCd(p.up)),
+    uf: Math.round(p.ultCdFull || RULES.ultCd(p.tot)),
     gh: hidden(p, now) ? 1 : 0, fk: p.ghostUntil > now && p.flickerUntil > now ? 1 : 0,
     iv: p.invUntil > now ? 1 : 0,
     ds: p.dashUntil > now ? 1 : 0, su: p.surgeUntil > now ? 1 : 0,
@@ -1178,6 +1267,9 @@ setInterval(() => {
     if (room.gridDirty) { room.gridDirty = false; broadcast(room, gridMsg(room)); }
     if (room.towersDirty) { room.towersDirty = false; broadcast(room, towersMsg(room)); }
     if (room.unlockDirty) { room.unlockDirty = false; broadcast(room, unlockMsg(room)); }
+    for (const p of room.players.values()) {
+      if (p.invDirty) { p.invDirty = false; send(p, invMsg(p)); }
+    }
     broadcast(room, stateMsg(room, now));
   }
 }, TICK_MS);
@@ -1207,22 +1299,27 @@ function onJoin(ws, m) {
     surgeUntil: 0, surgeMul: 1, rootUntil: 0, tunnelUntil: 0,
     endAt: 0, endNeed: 0, onEnd: false, onTunnel: false,
     extraSlots: 0, slots: 0, ult: '', ultCd: 0, ultUntil: 0,
+    bag: [], equip: { helmet: 0, chest: 0, boots: 0 }, gear: {}, tot: {}, eqR: [-1, -1, -1],
+    invDirty: true, bagWarned: false,
     cd: {}, cdFull: {}, ultCdFull: 0,
     slow: 1, terrain: 1, inFrost: false, lastHurt: 0, trapAt: {},
   };
   p.slots = room.set.slotStart;
+  p.tot = RULES.totalLevels(p.up, null);
   ws.player = p;
   room.players.set(p.id, p);
   if (m.role === 'mm' && !room.mm) { p.role = 'mm'; room.mm = p; }
   else if (m.role === 'mm') note(p, 'The Mastermind seat is taken by ' + room.mm.name + '. You are a runner for now.', 'warn');
-  p.maxHp = rMaxHp(room, p); p.hp = p.maxHp;
-  p.barrierMax = RULES.barrierMax(room.set, p.up); p.barrier = p.barrierMax;
+  recalcRunner(room, p);
+  p.hp = p.maxHp; p.barrier = p.barrierMax;
   placeAtStart(room, p, Date.now());
   send(p, JSON.stringify({ t: 'w', id: p.id, role: p.role, room: code, name, defs: DEFS }));
   send(p, setMsg(room));
   send(p, gridMsg(room));
   send(p, towersMsg(room));
   send(p, unlockMsg(room));
+  send(p, invMsg(p));
+  p.invDirty = false;
   shout(room, name + ' joined as ' + (p.role === 'mm' ? 'the Mastermind' : 'a runner') + '.');
 }
 
@@ -1273,7 +1370,7 @@ function setRole(p, role) {
     if (p.role === 'runner') return;
     p.role = 'runner'; p.dead = false; p.hp = p.maxHp;
     p.slots = Math.min(ABILITY_KEYS.length, room.set.slotStart + p.extraSlots);
-    p.barrier = RULES.barrierMax(room.set, p.up);
+    p.barrier = RULES.barrierMax(room.set, p.tot);
     placeAtStart(room, p, now);
     shout(room, p.name + ' is now a runner.');
   }
@@ -1348,7 +1445,7 @@ function useAbility(room, p, key, now) {
       ev(room, { k: 'surge', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       break;
     case 'medkit':
-      healRunner(room, p, a.heal * RULES.healPow(p.up), now);
+      healRunner(room, p, a.heal * RULES.healPow(p.tot), now);
       break;
     case 'nova': {
       /* Two blocks of healing, for you and anyone running with you. */
@@ -1357,7 +1454,7 @@ function useAbility(room, p, key, now) {
       for (const o of runners(room)) {
         if (o.dead) continue;
         if (Math.hypot(o.x - p.x, o.y - p.y) > a.radius + RUNNER_R) continue;
-        if (healRunner(room, o, a.heal * RULES.healPow(p.up), now) > 0) n++;
+        if (healRunner(room, o, a.heal * RULES.healPow(p.tot), now) > 0) n++;
       }
       if (n > 1) note(p, 'Nova healed ' + n + ' runners.', 'good');
       break;
@@ -1373,9 +1470,9 @@ function useUltimate(room, p, now) {
   if (p.ultCd > now) return;
   const u = RULES.ULTS[p.ult];
   p.ultUntil = now + RULES.ULT_DUR;
-  p.ultCdFull = RULES.ultCd(p.up);
+  p.ultCdFull = RULES.ultCd(p.tot);
   p.ultCd = now + p.ultCdFull;
-  if (u.stat === 'barrier') p.barrier = RULES.barrierMax(room.set, p.up) * RULES.ultMul(p.ult, p.up.ultimate);
+  if (u.stat === 'barrier') p.barrier = RULES.barrierMax(room.set, p.tot) * RULES.ultMul(p.ult, p.up.ultimate);
   ev(room, { k: 'ult', x: Math.round(p.x), y: Math.round(p.y), id: p.id, u: p.ult,
     n: u.name, c: u.color, d: RULES.ULT_DUR, m: Math.round(RULES.ultMul(p.ult, p.up.ultimate) * 10) / 10 });
   shout(room, p.name + ' unleashed ' + u.name + '!', 'warn');
@@ -1429,6 +1526,7 @@ function onMessage(ws, raw) {
         const cost = RULES.ultCost(room.set, p.up.ultimate);
         if (p.points < cost) { note(p, 'Need ' + cost + ' points for the ultimate.', 'warn'); break; }
         p.points -= cost; p.up.ultimate++;
+        recalcRunner(room, p);
         ev(room, { k: 'levelup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
         note(p, 'Ultimate is now level ' + p.up.ultimate + '.', 'good');
         break;
@@ -1446,7 +1544,7 @@ function onMessage(ws, raw) {
       if (p.points < cost) { note(p, 'Need ' + cost + ' points for ' + def.name + '.', 'warn'); break; }
       p.points -= cost; p.up[m.key] = lv + 1;
       const wasMax = p.maxHp;
-      p.maxHp = rMaxHp(room, p);
+      recalcRunner(room, p);
       /* Vitality hands you the health it just added and not a flat 26: past
          the soft cap a level adds far less than that, and topping up by the
          full amount every time turned Vitality into a cheap repeatable heal. */
@@ -1477,7 +1575,51 @@ function onMessage(ws, raw) {
       if (!def || def.kind !== 'ability' || !p.up[m.key]) break;
       const back = RULES.refundFor(room.set, def, p.up[m.key]);
       p.up[m.key] = 0; p.cd[m.key] = 0; p.cdFull[m.key] = 0; p.points += back;
+      recalcRunner(room, p);
       note(p, 'Dropped ' + def.name + ' for ' + back + ' points back.', 'info');
+      break;
+    }
+
+    /* Gear. One item per slot, swapped only while standing on a START tile --
+       kitting up is something you do before a run, not during one. */
+    case 'equip': {
+      if (p.role !== 'runner') break;
+      const it = itemById(p, m.id);
+      if (!it) break;
+      if (p.equip[it.slot] === it.id) break;
+      if (!atStart(room, p) || p.dead) {
+        note(p, 'Gear can only be changed while you are standing on a START tile.', 'warn');
+        break;
+      }
+      p.equip[it.slot] = it.id;
+      recalcRunner(room, p); p.invDirty = true;
+      ev(room, { k: 'gear', x: Math.round(p.x), y: Math.round(p.y), id: p.id,
+        c: RULES.RARITY[it.r].color, n: it.name });
+      note(p, 'Equipped ' + it.name + '.', 'good');
+      break;
+    }
+
+    case 'unequip': {
+      if (p.role !== 'runner') break;
+      if (RULES.EQUIP_SLOTS.indexOf(m.slot) < 0 || !p.equip[m.slot]) break;
+      if (!atStart(room, p) || p.dead) {
+        note(p, 'Gear can only be changed while you are standing on a START tile.', 'warn');
+        break;
+      }
+      p.equip[m.slot] = 0;
+      recalcRunner(room, p); p.invDirty = true;
+      break;
+    }
+
+    case 'discard': {
+      if (p.role !== 'runner') break;
+      const it = itemById(p, m.id);
+      if (!it) break;
+      if (p.equip[it.slot] === it.id) p.equip[it.slot] = 0;
+      p.bag = p.bag.filter(i => i.id !== it.id);
+      p.bagWarned = false;
+      recalcRunner(room, p); p.invDirty = true;
+      note(p, 'Discarded ' + it.name + '.');
       break;
     }
 
@@ -1519,7 +1661,7 @@ function onMessage(ws, raw) {
       if (!wantEdit) room.roundStart = now;
       for (const r of runners(room)) {
         r.dead = false; r.hp = r.maxHp; r.shield = 0;
-        r.barrier = RULES.barrierMax(room.set, r.up);
+        r.barrier = RULES.barrierMax(room.set, r.tot);
         placeAtStart(room, r, now);
       }
       gridChanged(room);

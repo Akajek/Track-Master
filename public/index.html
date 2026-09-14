@@ -118,7 +118,7 @@
   /* an ability row: the buy button, and a drop button beside it that stays
      usable when the buy button is greyed out for want of points */
   .abrow { display:flex; gap:5px; margin-bottom:5px; align-items:stretch; }
-  .abrow > button[data-up] { flex:1; margin-bottom:0 !important; }
+  .abrow > button:not(.drop) { flex:1; min-width:0; margin-bottom:0 !important; }
   #side .list .abrow .drop { flex:none; width:auto; color:var(--muted); font-size:11px;
                              padding:0 8px; display:flex; align-items:center; justify-content:center;
                              margin-bottom:0; white-space:nowrap; }
@@ -139,6 +139,21 @@
   .slotline .muted { margin-left:6px; font-size:12px; }
 
   .setRow button.toggle { width:100%; text-align:left; }
+
+  /* ------------------------------------------------------------------ gear */
+  .gearslot { position:relative; display:flex; flex-direction:column; gap:1px;
+              border:1px solid var(--line); border-left-width:3px; border-radius:7px;
+              padding:6px 34px 6px 9px; margin-bottom:5px; background:#0f1425; }
+  .gearslot .gs { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+  .gearslot .gn { font-weight:700; font-size:13px; }
+  .gearslot small { color:var(--muted); font-size:11px; }
+  .gearslot .drop { position:absolute; right:6px; top:50%; transform:translateY(-50%);
+                    padding:2px 7px; font-size:11px; color:var(--muted); }
+  .gearslot .drop:hover:not(:disabled) { color:var(--warn); border-color:var(--warn); }
+  #bagList { max-height:270px; overflow-y:auto; }
+  #bagList .abrow { margin-bottom:4px; }
+  #bagList button[data-item] { padding:5px 9px; }
+  .gearlv { color:#86efac; font-weight:700; }
 
   #toasts { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex;
             flex-direction:column; gap:6px; pointer-events:none; z-index:5; align-items:center; }

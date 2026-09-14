@@ -7,7 +7,7 @@ Asymmetric multiplayer tower defense for a few friends in a browser.
   runner dies.
 - **The Runners** (everyone else) control a blob with WASD and try to get from a
   START to an END alive — and then *hold* that END long enough to escape. Every
-  escape scores a **victory point** for their side.
+  escape scores a **victory point** for their side — and drops a piece of gear.
 
 First side to the victory target wins the round. Then the board resets and the
 Mastermind builds again.
@@ -66,7 +66,7 @@ Nothing is hard capped and nothing is unlimited. Levels climb forever; what they
 | Passive upgrades | level 15 | each level worth less than the last, approaching +12 more, never reaching it |
 | Speed | level 15 | a much harsher curve of its own |
 | Abilities | level 5 | barely move past it |
-| Dodge, Deflection | — | **share** one **35%** ceiling: levels in either push the same curve, and together they never pass it |
+| Dodge, Deflection | — | each approaches its own **35%** ceiling, and the two **stack** |
 
 The game says all of this out loud. Every upgrade button past its soft cap is
 marked `diminishing` and shows its **effective** level next to its real one, the
@@ -233,6 +233,22 @@ own ceiling, because a thirty times move speed is not a super buff, it is a
 crash. Levelling the ultimate raises the potency sharply, and it is priced to
 match.
 
+#### Gear
+
+Every escape drops one piece of equipment: **55% common, 25% rare, 15% epic,
+5% legendary** — grey, blue, purple, gold. Which of the three slots it is for is
+random too.
+
+| | |
+|---|---|
+| Slots | **Helmet**, **Chestplate**, **Boots**. One item worn in each, and the three are independent. |
+| What an item does | It lends you **levels in ordinary upgrades** — "+4 Haste, +3 Regen" means exactly those levels. So gear rides the same curves as anything you bought, and it never changes what your next level *costs*, because prices read the levels you actually paid for. |
+| What rolls where | A helmet rolls from Haste, Scholar, Energy Resist, Healing Power, Dodge and Regen; a chestplate from Vitality, Armor, Barrier, Bullet/Fire Resist, Last Stand and Trap Resist; boots from Speed, Grip, Momentum, Quick Revive, Field Medic and Deflection. |
+| Rarity | Common rolls one stat, rare two, epic three, legendary four — and the numbers climb with it. A legendary is worth a dozen levels or more. |
+| Changing it | Only while standing on a **START** tile. Kitting up is something you do before a run, not in the middle of one. The sidebar tells you which of those two you are. |
+| Seeing it | Worn gear is drawn on the runner: a dome for the helmet, a band for the chestplate, a pair of pads for the boots, each in its rarity colour. Legendary pieces glow, and epic and legendary helmets grow a crest — so the Mastermind can see a kitted-out runner coming. |
+| The bag | Holds 24. Anything you do not want can be discarded, and the ✕ says what it was worth. |
+
 #### Passive upgrades
 
 Speed, Vitality, **Regen** (which heals you while you are being shot, not only
@@ -247,10 +263,9 @@ passes straight through you), **Deflection** (you bat it back the way it came),
 Grip (resist slows, glue and steep ground), Haste, Momentum, Scholar, Quick
 Revive and Last Stand.
 
-Dodge and Deflection share a single 35% ceiling rather than having one each —
-two independent 35% rolls come out at 58%, which is not a 35% ceiling. Levels in
-either push the same curve, and which flavour you get on a miss follows whichever
-you have put more into.
+Dodge and Deflection are rolled separately and stack: a runner who has bought
+both is harder to hit than one who bought either. Stacking is the point — the
+35% is the ceiling on each curve, not a budget for the pair.
 
 If the Mastermind leaves, the seat opens and any runner can take it from the top
 bar. The Mastermind can also step down and become a runner.
@@ -282,8 +297,9 @@ send has a matching effect, and the test suite checks that.
   WebSockets: settings, map resizing, the armoury, steep ground, tunnels,
   several STARTs and ENDs, the END hold, victory points, diminishing returns,
   ability slots, the ultimate, the healing nova, the barrier, elemental resists,
-  the ghost nerf, Mastermind upgrades, every trap, tower upgrade tracks and
-  pricing, the six form changes, healing under fire, and a win. It also checks
+  gear drops and the three equipment slots, the ghost nerf, Mastermind upgrades,
+  every trap, tower upgrade tracks and pricing, the six form changes, healing
+  under fire, and a win. It also checks
   the client files are served, that every sound the client asks for exists, and
   that every server event has a visual effect. Run with `npm test`.
 - `tools/balance-probe.js` — the balance readout above. `npm run balance`.

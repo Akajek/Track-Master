@@ -211,19 +211,15 @@ const RULES = {
   /* Traps only. Standing on the spikes is a different problem to being shot. */
   trapMul(up) { return 1 / (1 + 0.08 * RULES.eff(up.trapres || 0)); },
   toughMul(up) { return 1 / (1 + 0.1 * RULES.eff(up.tough)); },
-  /* Dodge and Deflection are two flavours of one thing: not being hit by a
-     bullet, so they share a single ceiling. Given a ceiling each, a runner who
-     bought both rolled them independently and missed 58% of everything, which
-     is not what "never stronger than 35%" means. Levels in either upgrade push
-     the same curve; which flavour you get on a miss follows whichever of the
-     two you have put more into. */
-  evadeChance(up) { return RULES.chance((up.dodge || 0) + (up.deflect || 0), RULES.DODGE_MAX); },
-  deflectShare(up) {
-    const d = up.dodge || 0, f = up.deflect || 0;
-    return d + f > 0 ? f / (d + f) : 0;
+  /* Two separate rolls, each with its own ceiling, and they stack -- buying
+     both is meant to be better than buying one. The 35% is the ceiling on each
+     upgrade; what they come to together is the reward for going all in. */
+  dodgeChance(up) { return RULES.chance(up.dodge, RULES.DODGE_MAX); },
+  deflectChance(up) { return RULES.chance(up.deflect, RULES.DODGE_MAX); },
+  /* What the two actually add up to, for the stats panel. */
+  evadeChance(up) {
+    return 1 - (1 - RULES.dodgeChance(up)) * (1 - RULES.deflectChance(up));
   },
-  dodgeChance(up) { return RULES.evadeChance(up) * (1 - RULES.deflectShare(up)); },
-  deflectChance(up) { return RULES.evadeChance(up) * RULES.deflectShare(up); },
 
   /* ---- everything else ---- */
   gripMul(up)  { return 1 / (1 + 0.13 * RULES.eff(up.grip)); },
@@ -289,6 +285,63 @@ const RULES = {
     return Math.min(u.cap, RULES.ultPotency(lv));
   },
   ultCd(up) { return RULES.ULT_CD * RULES.hasteMul(up); },
+
+  /* =============================================================== equipment */
+  /* Three slots, one item in each, and every item is rolled fresh when a
+     runner escapes. An item grants LEVELS in ordinary upgrades rather than
+     numbers of its own, so gear rides exactly the same curves as anything you
+     bought -- no second set of maths to keep in step, and a legendary helmet
+     is legible the moment you read it. */
+  EQUIP_SLOTS: ['helmet', 'chest', 'boots'],
+  SLOT_NAME: { helmet: 'Helmet', chest: 'Chestplate', boots: 'Boots' },
+  RARITY: [
+    { key: 'common',    name: 'Common',    color: '#9ca3af', odds: 55, rolls: 1, lo: 1, hi: 2 },
+    { key: 'rare',      name: 'Rare',      color: '#60a5fa', odds: 25, rolls: 2, lo: 1, hi: 3 },
+    { key: 'epic',      name: 'Epic',      color: '#a78bfa', odds: 15, rolls: 3, lo: 2, hi: 4 },
+    { key: 'legendary', name: 'Legendary', color: '#fbbf24', odds: 5,  rolls: 4, lo: 3, hi: 6 },
+  ],
+  /* What each slot can roll. Kept thematic so a helmet never turns up with
+     boot stats on it. */
+  SLOT_POOL: {
+    helmet: ['haste', 'scholar', 'resEnergy', 'healpow', 'dodge', 'regen'],
+    chest:  ['hp', 'armor', 'barrier', 'resBullet', 'resFire', 'tough', 'trapres'],
+    boots:  ['speed', 'grip', 'momentum', 'revive', 'oocheal', 'deflect'],
+  },
+  RARITY_WORD: ['Worn', 'Fine', 'Runed', 'Radiant'],
+  SLOT_BASE: {
+    helmet: ['Cap', 'Helm', 'Casque', 'Crown'],
+    chest:  ['Vest', 'Mail', 'Plate', 'Aegis'],
+    boots:  ['Shoes', 'Boots', 'Greaves', 'Striders'],
+  },
+  BAG_MAX: 24,
+  /* A roll in [0,100) turned into a rarity index. */
+  rarityFromRoll(roll) {
+    let acc = 0;
+    for (let i = 0; i < RULES.RARITY.length; i++) {
+      acc += RULES.RARITY[i].odds;
+      if (roll < acc) return i;
+    }
+    return 0;
+  },
+  /* Total levels an item carries, for sorting a bag and for the UI. */
+  itemPower(item) {
+    let n = 0;
+    for (const k in item.stats) n += item.stats[k];
+    return n;
+  },
+  itemTopStat(item) {
+    let best = null, bv = -1;
+    for (const k in item.stats) if (item.stats[k] > bv) { bv = item.stats[k]; best = k; }
+    return best;
+  },
+  /* Bought levels plus the levels your gear is lending you. Every stat formula
+     takes this; costs take the bought levels alone. */
+  totalLevels(up, gear) {
+    const t = {};
+    for (const k in up) t[k] = up[k];
+    if (gear) for (const k in gear) t[k] = (t[k] || 0) + gear[k];
+    return t;
+  },
 
   /* ================================================================== text */
   /* A one-line summary of what a building does at its current upgrades. */
