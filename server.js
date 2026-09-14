@@ -188,7 +188,7 @@ const UPGRADES = {
   regen:     { name: 'Regen',        kind: 'passive', desc: '+2.6 HP/s, even while being shot' },
   oocheal:   { name: 'Field Medic',  kind: 'passive', desc: '+7 HP/s once nothing has hit you for 2.5s' },
   healpow:   { name: 'Healing Power', kind: 'passive', desc: '+12% from every source of healing you have' },
-  barrier:   { name: 'Barrier',      kind: 'passive', desc: '+30 barrier. Eats damage before health, regrows out of combat' },
+  barrier:   { name: 'Barrier',      kind: 'passive', desc: '+22 barrier. Eats damage before health, and grows back out of combat' },
   armor:     { name: 'Armor',        kind: 'passive', desc: 'Less damage from everything' },
   resBullet: { name: 'Bullet Resist', kind: 'passive', desc: 'Less damage from bullets, on top of Armor' },
   resFire:   { name: 'Fire Resist',  kind: 'passive', desc: 'Less damage from fire, on top of Armor' },

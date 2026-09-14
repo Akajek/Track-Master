@@ -185,9 +185,13 @@ const RULES = {
   /* A second health bar that eats damage first and grows back on its own, but
      only while you are not being hit. */
   BARRIER_MS: 1800,
+  /* Deliberately a little under Vitality's 26 a level. A point of barrier
+     repairs itself, so at the same size it would have made Vitality pointless
+     -- the trade is meant to be "a smaller pool that comes back" against "a
+     bigger pool that healing can reach". */
   barrierMax(set, up) {
     const dial = set && set.runnerHp ? set.runnerHp / 100 : 1;
-    return 30 * RULES.eff(up.barrier) * dial;
+    return 22 * RULES.eff(up.barrier) * dial;
   },
   barrierRegen(up) { return (6 + 3 * RULES.eff(up.barrier)) * RULES.healPow(up); },
 

@@ -140,7 +140,7 @@ At the time of writing it reports, per sixty seconds:
 |---|---|---|
 | One sniper (256g) | 10 | 0 |
 | Six snipers (1,556g) | 6 | 4 |
-| Mixed turrets, snipers and traps (816g) | 7 | 2 |
+| Mixed turrets, snipers and traps (816g) | 6 | 3 |
 | The same mixed defence at 200% tower damage | 0 | 9 |
 | The same at 50% tower damage | 9 | 0 |
 
@@ -239,7 +239,8 @@ Speed, Vitality, **Regen** (which heals you while you are being shot, not only
 once you are left alone), **Field Medic** (much stronger healing, but only once
 nothing has touched you for 2.5s), **Healing Power** (multiplies every source of
 healing you have), **Barrier** (a second bar that eats damage before your health
-and grows back out of combat), Armor, **Bullet / Fire / Energy Resist** (which
+and grows back out of combat — a little smaller per level than Vitality,
+because it repairs itself), Armor, **Bullet / Fire / Energy Resist** (which
 add on top of Armor rather than multiplying with it, so the second one you buy
 is never wasted), **Trap Resist** (damaging traps only), **Dodge** (a bullet
 passes straight through you), **Deflection** (you bat it back the way it came),
