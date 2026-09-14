@@ -279,6 +279,120 @@ const VFX = (() => {
         if (e.n) text(e.x, e.y - 34, e.n.toUpperCase(), { c: e.c || '#fbbf24', size: 15, life: 1.6, vy: -20 });
         shake(3);
         break;
+      /* ---- barrier: a second bar that has to visibly be there to be felt ---- */
+      case 'barrierhit':
+        ring(e.x, e.y, { r0: 13, r1: 19, life: 0.2, c: '#38bdf8', w: 2 });
+        burst(e.x, e.y, { n: 4, c: ['#7dd3fc', '#e0f2fe'], spd0: 30, spd1: 120, size0: 1, size1: 2.2,
+          life0: 0.12, life1: 0.3 });
+        break;
+      case 'barrierbreak':
+        ring(e.x, e.y, { r0: 14, r1: 40, life: 0.4, c: '#38bdf8', w: 3 });
+        burst(e.x, e.y, { n: 18, c: ['#38bdf8', '#bae6fd', '#fff'], spd0: 70, spd1: 250, size0: 1.5, size1: 3.4,
+          life0: 0.2, life1: 0.55, shape: 'chip' });
+        text(e.x, e.y - 30, 'BARRIER DOWN', { c: '#7dd3fc', size: 12, life: 1 });
+        if (e.id === myId) shake(2);
+        break;
+      case 'barrierup':
+        ring(e.x, e.y, { r0: 34, r1: 14, life: 0.35, c: '#38bdf8', w: 2, ease: 'in' });
+        break;
+
+      /* ---- dodge and deflection: a miss has to read as a miss ---- */
+      case 'dodge':
+        text(e.x + rnd(-6, 6), e.y - 22, 'MISS', { c: '#cbd5e1', size: 12, life: 0.7 });
+        burst(e.x, e.y, { n: 5, c: ['#e2e8f0', '#94a3b8'], spd0: 30, spd1: 120, size0: 1, size1: 2,
+          life0: 0.12, life1: 0.3, glow: false });
+        break;
+      case 'deflect':
+        text(e.x, e.y - 24, 'DEFLECT', { c: '#fde68a', size: 13, life: 0.85 });
+        ring(e.x, e.y, { r0: 8, r1: 26, life: 0.28, c: '#fde68a', w: 3 });
+        burst(e.x, e.y, { n: 10, c: ['#fde68a', '#fff'], spd0: 80, spd1: 230, size0: 1.2, size1: 2.8,
+          life0: 0.12, life1: 0.35 });
+        break;
+
+      /* ---- ghost losing its grip on a trap ---- */
+      case 'flicker':
+        ring(e.x, e.y, { r0: 6, r1: 26, life: 0.3, c: '#fca5a5', w: 2 });
+        text(e.x, e.y - 28, 'SPOTTED', { c: '#fca5a5', size: 11, life: 0.8 });
+        break;
+
+      /* ---- tunnels ---- */
+      case 'tunnelin':
+        glyph(e.x, e.y, 'portal', { life: 0.45, c: '#a78bfa', r: 22 });
+        burst(e.x, e.y, { n: 16, c: ['#a78bfa', '#312e81'], spd0: 20, spd1: 110, size0: 1.5, size1: 3,
+          life0: 0.2, life1: 0.5 });
+        ring(e.x, e.y, { r0: 26, r1: 2, life: 0.32, c: '#a78bfa', w: 3, ease: 'in' });
+        break;
+      case 'tunnelout':
+        ring(e.x, e.y, { r0: 2, r1: 30, life: 0.38, c: '#c4b5fd', w: 3 });
+        burst(e.x, e.y, { n: 18, c: ['#c4b5fd', '#fff'], spd0: 50, spd1: 200, size0: 1.5, size1: 3.2,
+          life0: 0.2, life1: 0.5 });
+        break;
+
+      /* ---- the jolt plate ---- */
+      case 'jolt':
+        lightning(e.x, e.y, e.x2, e.y2, '#818cf8');
+        ring(e.x, e.y, { r0: 4, r1: 24, life: 0.25, c: '#818cf8', w: 2 });
+        break;
+
+      /* ---- healing nova ---- */
+      case 'nova':
+        ring(e.x, e.y, { r0: 4, r1: e.r, life: 0.55, c: '#4ade80', w: 5 });
+        ring(e.x, e.y, { r0: 4, r1: e.r * 0.7, life: 0.35, c: '#fff', w: 2 });
+        ring(e.x, e.y, { r0: e.r, r1: e.r * 0.3, life: 0.5, c: '#86efac', w: 2, ease: 'in' });
+        for (let i = 0; i < 26; i++) {
+          const a = rnd(0, Math.PI * 2), d = rnd(0, e.r);
+          part({ x: e.x + Math.cos(a) * d, y: e.y + Math.sin(a) * d, vx: rnd(-12, 12), vy: rnd(-90, -40),
+            life: rnd(0.5, 1), size: rnd(2, 4.5), c: pick(['#4ade80', '#86efac', '#dcfce7']) });
+        }
+        text(e.x, e.y - 40, 'NOVA', { c: '#4ade80', size: 14, life: 1 });
+        break;
+
+      /* ---- the ultimate: this one is allowed to be too much ---- */
+      case 'ult': {
+        const c = e.c || '#fbbf24';
+        flash('#000000', 0.5);
+        shake(11);
+        for (let i = 0; i < 4; i++) {
+          ring(e.x, e.y, { r0: 4 + i * 8, r1: 110 + i * 46, life: 0.55 + i * 0.16, c: i % 2 ? '#000000' : c, w: 6 - i });
+        }
+        ring(e.x, e.y, { r0: 150, r1: 10, life: 0.4, c: '#fff', w: 4, ease: 'in' });
+        burst(e.x, e.y, { n: 48, c: [c, '#fff', '#000000'], spd0: 90, spd1: 460, size0: 2, size1: 6,
+          life0: 0.4, life1: 1.1, drag: 0.94 });
+        for (let i = 0; i < 14; i++) {
+          const a = (i / 14) * Math.PI * 2 + rnd(-0.2, 0.2);
+          beam(e.x, e.y, e.x + Math.cos(a) * rnd(70, 180), e.y + Math.sin(a) * rnd(70, 180),
+            { c: i % 2 ? c : '#fff', w: 3, jag: 14, life: 0.4 });
+        }
+        text(e.x, e.y - 48, (e.n || 'ULTIMATE').toUpperCase() + '  ×' + (e.m || ''),
+          { c, size: 20, life: 2, vy: -18 });
+        glyph(e.x, e.y, 'ult', { life: (e.d || 5000) / 1000, c, r: 30, id: e.id });
+        break;
+      }
+
+      /* ---- escaping ---- */
+      case 'escapestart':
+        ring(e.x, e.y, { r0: 30, r1: 14, life: 0.3, c: '#fbbf24', w: 2, ease: 'in' });
+        break;
+      case 'escapelost':
+        text(e.x, e.y - 26, 'RESET', { c: '#fca5a5', size: 12, life: 0.7 });
+        ring(e.x, e.y, { r0: 14, r1: 32, life: 0.3, c: '#f87171', w: 2 });
+        break;
+
+      /* ---- the Mastermind's armoury ---- */
+      case 'unlockpt':
+        text(boardW / 2, 46, '+' + (e.n || 1) + ' UNLOCK POINT', { c: '#fbbf24', size: 16, life: 1.6, vy: -14 });
+        break;
+      case 'unlocked':
+        text(boardW / 2, 70, (e.n || '').toUpperCase() + ' UNLOCKED', { c: e.c || '#fbbf24', size: 18, life: 2, vy: -12 });
+        for (let i = 0; i < 3; i++) {
+          ring(boardW / 2, 70, { r0: 4, r1: 60 + i * 30, life: 0.5 + i * 0.15, c: e.c || '#fbbf24', w: 3 });
+        }
+        break;
+      case 'slot':
+        text(e.x, e.y - 34, 'SLOT ' + e.n, { c: '#7dd3fc', size: 13, life: 1.1 });
+        ring(e.x, e.y, { r0: 4, r1: 30, life: 0.35, c: '#7dd3fc', w: 2 });
+        break;
+
       case 'win':
         flash(e.team === 'runners' ? '#065f46' : '#7f1d1d', 0.5);
         shake(10);
@@ -419,6 +533,17 @@ const VFX = (() => {
         ctx.beginPath();
         ctx.ellipse(g.x, g.y, rr, rr * 0.45, f * 6 + i, 0, Math.PI * 2);
         ctx.stroke();
+      }
+    } else if (g.kind === 'ult') {
+      /* A slow black-and-colour halo that hangs around for the whole duration,
+         so the ultimate is legible the entire time it is running and not just
+         in the frame it went off. */
+      ctx.globalAlpha = 0.85 * (1 - f * 0.4);
+      for (let i = 0; i < 3; i++) {
+        const rr = g.r + i * 9 + Math.sin(f * 26 + i) * 3;
+        ctx.strokeStyle = i === 1 ? '#000000' : g.c;
+        ctx.lineWidth = 3 - i * 0.6;
+        ctx.beginPath(); ctx.arc(g.x, g.y, rr, f * 8 + i, f * 8 + i + 4.4); ctx.stroke();
       }
     }
     ctx.globalAlpha = 1;

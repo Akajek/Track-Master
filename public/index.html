@@ -107,6 +107,33 @@
   #towerPanel .trk .c2 { font-size:12px; opacity:.75; min-width:34px; text-align:right; }
   #towerPanel .trk .c1 { min-width:38px; text-align:right; }
 
+  /* ------------------------------------------------- the Mastermind's armoury */
+  #unlockWrap { background:#0f1425; border:1px solid var(--line); border-radius:8px; padding:9px 10px; }
+  .ulTop { display:flex; justify-content:space-between; align-items:baseline; font-size:12.5px; margin-bottom:5px; }
+  #side .list button.locked { opacity:.72; border-style:dashed; }
+  #side .list button.locked .name { color:var(--muted); }
+  #side .list button.locked:not(:disabled) { border-color:var(--gold); opacity:1; }
+  #side .list .lock { filter:grayscale(.2); }
+  #side .list button.owned { border-left:3px solid var(--good); }
+  #side .list .drop { flex:none; color:var(--muted); font-size:13px; padding:0 5px; border-radius:4px; }
+  #side .list .drop:hover { color:var(--warn); background:#2a1622; }
+
+  /* the live numbers panel: a curve you can read beats a curve you are told about */
+  .statbox { border:1px solid var(--line); border-radius:8px; background:#0f1425; padding:4px 8px; }
+  .strow { display:flex; align-items:baseline; gap:8px; padding:3px 0; border-bottom:1px solid #1b2238; font-size:12.5px; }
+  .strow:last-child { border-bottom:none; }
+  .strow span { flex:1; color:var(--muted); }
+  .strow b { color:var(--text); font-variant-numeric:tabular-nums; }
+  .strow small { color:#5d6690; font-size:10.5px; min-width:96px; text-align:right; }
+
+  /* ability slots */
+  .slotline { display:flex; align-items:center; gap:5px; }
+  .slotline i { width:15px; height:15px; border-radius:4px; border:1px solid var(--line); background:#0c1020; }
+  .slotline i.on { background:var(--accent); border-color:var(--accent); }
+  .slotline .muted { margin-left:6px; font-size:12px; }
+
+  .setRow button.toggle { width:100%; text-align:left; }
+
   #toasts { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex;
             flex-direction:column; gap:6px; pointer-events:none; z-index:5; align-items:center; }
   .toast { background:rgba(10,14,28,.94); border:1px solid var(--line); border-radius:8px;
@@ -147,6 +174,15 @@
   #hud .slot.broke { opacity:.5; cursor:default; }
   #hud .slot.armed { border-color:var(--gold); box-shadow:0 0 12px rgba(251,191,36,.5); }
   #hud .slot:hover:not(.broke) { border-color:var(--accent); }
+  #hud .slot.noslot { opacity:.3; }
+  /* the ultimate gets its own, bigger slot on the end of the row */
+  #hud .slot.ult { width:72px; height:58px; border-color:var(--ultc,#fbbf24); margin-left:10px;
+                   background:linear-gradient(180deg,#171122,#10162a); }
+  #hud .slot.ult .ico { font-size:23px; }
+  #hud .slot.ult.ready { box-shadow:0 0 14px var(--ultc,#fbbf24); }
+  #hud .slot.ult.firing { animation:ultpulse .45s infinite alternate; }
+  @keyframes ultpulse { from { box-shadow:0 0 8px var(--ultc,#fbbf24); }
+                        to   { box-shadow:0 0 26px var(--ultc,#fbbf24); } }
   #hud .hudnote { font-size:12px; color:var(--muted); margin-left:4px; }
 </style>
 </head>

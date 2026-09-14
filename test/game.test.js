@@ -12,12 +12,12 @@ const path = require('path');
 const vm = require('vm');
 const http = require('http');
 const WebSocket = require('ws');
-const { server, rooms, pathConnected } = require('../server.js');
+const { server, rooms, pathConnected, findTiles, tunnelPartner } = require('../server.js');
 const RULES = require('../public/rules.js');
 
 const URL = 'ws://localhost:18765';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const T = { EMPTY: 0, PATH: 1, START: 2, END: 3 };
+const T = { EMPTY: 0, PATH: 1, START: 2, END: 3, STEEP: 4, TUNNEL: 5 };
 /* The tiny straight track every movement test runs on. */
 const ROW = 5, SX = 1, EX = 9;
 
@@ -33,6 +33,7 @@ function client(name, role, room) {
       else if (m.t === 'g') c.grid = m;
       else if (m.t === 'set') c.set = m.set;
       else if (m.t === 'tw') c.towers = m.tw;
+      else if (m.t === 'ul') c.ul = m;
       else if (m.t === 's') { c.state = m; if (c.welcome && !c.ready) { c.ready = true; resolve(c); } }
       else if (m.t === 'msg') c.msgs.push(m.text);
       else if (m.t === 'role') c.welcome.role = m.role;
@@ -108,6 +109,15 @@ async function setOpt(mm, key, v) {
   mm.send({ t: 'setting', key, v });
   await waitFor(() => mm.set[key] === v, 'setting ' + key + ' = ' + v);
 }
+/* The armoury opens by hurting people, which most of these tests are not
+   about. The unlock flow itself is tested for real further down; here the
+   points are handed over directly and then spent through the real message, so
+   the rest of the suite can reach for any building it likes. */
+async function openArmoury(mm, room, D) {
+  room.unlockPts = D.UNLOCKABLE.length + 2;
+  for (const k of D.UNLOCKABLE) mm.send({ t: 'unlock', key: k });
+  await waitFor(() => D.UNLOCKABLE.every(k => room.unlocked.has(k)), 'every building unlocked');
+}
 
 async function main() {
   await new Promise(r => server.listening ? r() : server.once('listening', r));
@@ -147,6 +157,25 @@ async function main() {
     'the panel DOM is rebuilt only when a different building is selected');
   assert.strictEqual((panelBody.match(/innerHTML = ''/g) || []).length, 1,
     'exactly one place clears the panel, and it is the per-building build');
+  /* The same bug, generalised: NOTHING on the per-snapshot update path may
+     assign innerHTML, because that rebuilds the children twenty times a second
+     and any element rebuilt under the pointer swallows the click. Markup goes
+     through setHtml(), which writes only when the string has actually changed. */
+  assert.ok(/function setHtml\(/.test(gameSrc), 'the client has a change-guarded markup writer');
+  const perFrame = ['updateSide', 'updateMM', 'refreshTowerPanel', 'updateRunner', 'updateHud'];
+  const bounds = {
+    updateSide: 'function updateMM(', updateMM: 'function updateTowerPanel(',
+    refreshTowerPanel: 'function lvLabel(', updateRunner: 'function setTool(',
+    updateHud: '/* ================================================================ canvas io */',
+  };
+  for (const fn of perFrame) {
+    const from = gameSrc.indexOf('function ' + fn + '(');
+    const to = gameSrc.indexOf(bounds[fn], from);
+    assert.ok(from >= 0 && to > from, 'found ' + fn + ' to check');
+    const body = gameSrc.slice(from, to);
+    assert.ok(!/\.innerHTML\s*=/.test(body),
+      fn + ' runs on every snapshot, so it must use setHtml() and never assign innerHTML');
+  }
   assert.strictEqual((await get('/healthz')).status, 200, 'health check for Render responds');
 
   /* ---- lobby, roles, defs ------------------------------------------------ */
@@ -157,19 +186,24 @@ async function main() {
   for (const t of ['turret', 'sniper', 'mortar', 'tesla', 'pulse', 'laser', 'flame', 'frost']) {
     assert.ok(D.TOWERS[t], 'tower ' + t + ' is defined');
   }
-  for (const t of ['spikes', 'glue', 'saw', 'mine', 'snare', 'portal']) {
+  for (const t of ['spikes', 'glue', 'saw', 'mine', 'snare', 'portal', 'tar', 'jolt']) {
     assert.ok(D.TRAPS[t], 'trap ' + t + ' is defined');
   }
   for (const k in D.BUILD) {
     assert.strictEqual(D.BUILD[k].forms.length, RULES.MAX_FORM + 1, k + ' has a name for every form');
     assert.ok(D.BUILD[k].tracks.length > 0, k + ' has at least one upgrade track, so it can grow');
   }
-  for (const u of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'momentum', 'grip', 'haste', 'tough']) {
+  for (const u of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'momentum', 'grip', 'haste', 'tough',
+                   'nova', 'barrier', 'healpow', 'oocheal', 'trapres', 'dodge', 'deflect',
+                   'resBullet', 'resFire', 'resEnergy']) {
     assert.ok(D.UPGRADES[u], 'upgrade ' + u + ' is defined');
   }
-  for (const s of ['gw', 'gh', 'income', 'incomeGrow', 'vpTarget', 'upGrow', 'twGrow', 'lapBonus']) {
+  for (const s of ['gw', 'gh', 'income', 'incomeGrow', 'vpTarget', 'upGrow', 'twGrow', 'lapBonus',
+                   'multiEnds', 'steepSlow', 'escapeBase', 'escapeLap', 'endResist', 'unlockRate',
+                   'slotStart']) {
     assert.ok(D.SETTINGS[s], 'setting ' + s + ' is defined');
   }
+  assert.ok(D.SETTINGS.multiEnds.bool, 'the several-STARTs option is a toggle, not a slider');
   assert.ok(!('max' in (D.UPGRADES.speed || {})), 'runner upgrades no longer carry a level cap');
   /* the HUD draws itself from these, so every ability needs an icon */
   for (const k of D.ABILITY_KEYS) assert.ok(D.UPGRADES[k].icon, 'runner ability ' + k + ' has a HUD icon');
@@ -222,20 +256,88 @@ async function main() {
   assert.strictEqual(mm.set.gw, 14, 'the map cannot be resized while the round is live');
   assert.ok(mm.msgs.some(t => /only change while editing/.test(t)), 'and says so');
 
+  /* ---- the armoury: damage buys unlock points, points buy buildings ------ */
+  /* A Mastermind now opens the round with almost nothing. The expensive,
+     round-ending toys have to be earned by actually hurting somebody, which is
+     the whole early-game nerf in one mechanic. */
+  assert.deepStrictEqual([...D.UNLOCK_START].sort(), ['glue', 'meteor', 'spikes', 'turret'],
+    'the Mastermind starts with a turret, spikes, glue and the meteor');
+  for (const k of D.UNLOCK_START) assert.ok(room.unlocked.has(k), k + ' is unlocked from the start');
+  assert.ok(!room.unlocked.has('sniper'), 'the sniper is not');
+  assert.strictEqual(mm.state.up, 0, 'and there are no unlock points yet');
+
+  mm.msgs.length = 0;
+  mm.send({ t: 'tower', type: 'sniper', x: SX + 3, y: ROW - 1 });
+  await sleep(150);
+  assert.ok(!twAt(mm, SX + 3, ROW - 1), 'a locked building cannot be placed');
+  assert.ok(mm.msgs.some(t => /still locked/.test(t)), 'and the Mastermind is told why');
+
+  await setOpt(mm, 'unlockRate', 25);        /* keep the test quick, not the mechanic soft */
+  mm.send({ t: 'tower', type: 'turret', x: SX, y: ROW - 2 });
+  await waitFor(() => twAt(mm, SX, ROW - 2), 'a turret they already own');
+  const need0 = mm.state.upn;
+  assert.ok(need0 > 0, 'the bar has a target to reach (' + need0 + ' damage)');
+  await waitFor(() => mm.state.up >= 1, 'hurting the runner earns an unlock point', 20000);
+  assert.ok(mm.state.upn > need0, 'and the next point costs more damage than the first');
+  /* Stop the shooting before counting points, or the bar fills again while we
+     are looking at it. Edit mode is the only way to be sure. */
+  mm.send({ t: 'sell', x: SX, y: ROW - 2 });
+  await waitFor(() => !twAt(mm, SX, ROW - 2), 'turret cleared away');
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'edit mode, so nothing else earns a point');
+  await sleep(200);
+  const ptsHeld = room.unlockPts;
+  mm.send({ t: 'unlock', key: 'sniper' });
+  await waitFor(() => room.unlocked.has('sniper'), 'the point buys the sniper');
+  assert.strictEqual(room.unlockPts, ptsHeld - 1, 'and is spent doing it');
+  assert.ok(mm.msgs.some(t => /unlocked the Sniper/.test(t)), 'everyone hears about it');
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'live again after the unlock');
+  await setOpt(mm, 'unlockRate', 100);
+  await openArmoury(mm, room, D);
+  assert.ok(room.unlocked.has('laser') && room.unlocked.has('barrage'), 'the rest of the armoury is open');
+
+  /* ---- holding the END --------------------------------------------------- */
+  /* Reaching the END is a touch; escaping is a hold. The clock resets the
+     moment a runner steps off, which is what makes a defended END a fight. */
+  await setOpt(mm, 'escapeBase', 1.5);
+  await setOpt(mm, 'escapeLap', 0);
+  await park(mm, run);
+  run.send({ t: 'input', dx: 1, dy: 0 });
+  await waitFor(() => me(run).esc > 0, 'the escape clock starts on the END tile', 8000);
+  assert.strictEqual(me(run).fin, 0, 'and a touch alone is not a finish');
+  assert.ok(me(run).en >= 1400, 'the hold is as long as the setting says (' + me(run).en + 'ms)');
+  run.send({ t: 'input', dx: -1, dy: 0 });
+  await waitFor(() => me(run).esc === 0, 'stepping off resets it to zero', 4000);
+  assert.strictEqual(me(run).fin, 0, 'still not a finish');
+  await setOpt(mm, 'escapeBase', 0.4);
+  await runRight(run, () => me(run).fin === 1, 'holding it through does finish', 9000);
+  run.send({ t: 'input', dx: 0, dy: 0 });
+  await sleep(100);
+  /* the Mastermind can buy more of that hold, which is the late-game buff */
+  const scaling = { escapeBase: 0.5, escapeLap: 0.25 };
+  const holdWas = RULES.escapeMs(scaling, 0, 0);
+  assert.strictEqual(holdWas, 500, 'the hold starts at half a second, as asked');
+  assert.ok(RULES.escapeMs(scaling, 0, 1) > holdWas, 'Lockdown lengthens the hold');
+  assert.ok(RULES.escapeMs(scaling, 4, 0) > holdWas, 'and so does every win the runner banks');
+  assert.strictEqual(D.SETTINGS.escapeBase.def, 0.5, 'and half a second is the default');
+
   /* ---- finishing: VP, points, lap bonus ---------------------------------- */
-  const hp0 = me(run).mh;
-  await runRight(run, () => me(run).fin === 1, 'the runner finishes a lap');
-  assert.strictEqual(run.state.vpRun, mm.set.vpFinish, 'a finish scores VP for the runners');
-  assert.strictEqual(me(run).lap, 1, 'the lap is banked');
+  const hp0 = me(run).mh, vp0 = run.state.vpRun, pts0 = me(run).pt, lap0 = me(run).lap;
+  await park(mm, run);
+  await runRight(run, () => me(run).fin === 2, 'the runner finishes another lap');
+  assert.strictEqual(run.state.vpRun, vp0 + mm.set.vpFinish, 'a finish scores VP for the runners');
+  assert.strictEqual(me(run).lap, lap0 + 1, 'the lap is banked');
   assert.ok(me(run).mh > hp0, 'the lap bonus raised max HP permanently');
   assert.ok(me(run).sh > 0, 'finishing hands out a free shield');
-  assert.strictEqual(me(run).pt, mm.set.ptsFinish, 'and upgrade points');
+  assert.strictEqual(me(run).pt, pts0 + mm.set.ptsFinish, 'and upgrade points');
   assert.strictEqual(me(run).x, startPx(SX), 'and puts the runner back at the start');
 
   /* ---- uncapped levels --------------------------------------------------- */
   await setOpt(mm, 'ptsFinish', 20);
   for (let i = 0; i < 3; i++) {
-    await runRight(run, () => me(run).fin === 2 + i, 'finish ' + (2 + i));
+    await park(mm, run);
+    await runRight(run, () => me(run).fin === 3 + i, 'finish ' + (3 + i));
   }
   assert.ok(me(run).pt >= 60, 'banked plenty of points (' + me(run).pt + ')');
   let spent = 0;
@@ -251,11 +353,84 @@ async function main() {
   await setOpt(mm, 'upGrow', 100);
   assert.ok(ptsAfter >= 0, 'points went down, not negative');
 
+  /* ---- diminishing returns ----------------------------------------------- */
+  /* Nothing is capped and nothing is unlimited. Past the soft cap a level is
+     worth less than the one before it, forever, and the client is given the
+     effective number so it can say so out loud. */
+  assert.strictEqual(RULES.eff(10), 10, 'below the soft cap a level is worth a level');
+  assert.strictEqual(RULES.eff(RULES.DR_START), RULES.DR_START, 'and right up to it');
+  for (let lv = RULES.DR_START; lv < 60; lv++) {
+    const step = RULES.eff(lv + 1) - RULES.eff(lv);
+    const prev = RULES.eff(lv) - RULES.eff(lv - 1);
+    assert.ok(step > 0, 'level ' + (lv + 1) + ' is still worth something');
+    assert.ok(step < prev, 'and worth less than level ' + lv);
+  }
+  assert.ok(RULES.eff(500) < RULES.DR_START + RULES.DR_REACH + 0.01, 'the curve converges instead of exploding');
+  assert.ok(RULES.speedEff(40) < RULES.eff(40), 'speed is on a harsher curve than everything else');
+  /* the bug this fixes: unlimited speed used to cross the whole board in a tick */
+  const board = mm.set.gw * 40;
+  assert.ok(RULES.speed(mm.set, { speed: 200 }, 0) * 0.05 < board / 3,
+    'even an absurdly levelled runner cannot cross a third of the board in one tick');
+  assert.ok(RULES.abEff(RULES.AB_CAP) === RULES.AB_CAP, 'abilities pay full value to their cap');
+  assert.ok(RULES.abEff(30) < RULES.AB_CAP + RULES.AB_REACH + 0.01, 'and barely move past it');
+  assert.ok(RULES.softCapped('speed', 'passive', RULES.DR_START + 1), 'a passive past 15 is flagged');
+  assert.ok(!RULES.softCapped('speed', 'passive', RULES.DR_START), 'and not before');
+  assert.ok(RULES.softCapped('dash', 'ability', RULES.AB_CAP + 1), 'an ability past 5 is flagged');
+  for (const lv of [1, 5, 10, 20, 50, 200]) {
+    assert.ok(RULES.dodgeChance({ dodge: lv }) < RULES.DODGE_MAX, 'dodge at ' + lv + ' stays under the ceiling');
+    assert.ok(RULES.deflectChance({ deflect: lv }) < RULES.DODGE_MAX, 'deflection at ' + lv + ' does too');
+  }
+  assert.ok(RULES.dodgeChance({ dodge: 12 }) > 0.25, 'but a heavy investment still gets most of the way there');
+  const gameSrcDr = fs.readFileSync(path.join(__dirname, '..', 'public', 'game.js'), 'utf8');
+  assert.ok(/function lvLabel/.test(gameSrcDr) && /eff /.test(gameSrcDr),
+    'the client shows the effective level, not just the raw one');
+  assert.ok(/diminishing/.test(gameSrcDr), 'and says the word out loud');
+
+  /* ---- ability slots ------------------------------------------------------ */
+  /* Four slots to start with. A fifth ability needs a slot bought first, which
+     is what stops a runner simply owning everything. */
+  assert.strictEqual(me(run).sx, mm.set.slotStart, 'a runner starts with the configured slots');
+  const fourAbilities = ['blink', 'shield', 'decoy', 'surge'];
+  for (const k of fourAbilities) run.send({ t: 'upgrade', key: k });
+  await waitFor(() => fourAbilities.every(k => me(run).up[k] >= 1), 'four abilities fill four slots');
+  run.msgs.length = 0;
+  run.send({ t: 'upgrade', key: 'medkit' });
+  await sleep(200);
+  assert.strictEqual(me(run).up.medkit, 0, 'a fifth will not fit');
+  assert.ok(run.msgs.some(t => /No free ability slot/.test(t)), 'and the runner is told why');
+  run.send({ t: 'upgrade', key: 'blink' });
+  await waitFor(() => me(run).up.blink === 2, 'but levelling one you already hold is fine');
+
+  const slotCost = RULES.slotCost(mm.set, me(run).sx);
+  assert.ok(RULES.slotCost(mm.set, me(run).sx + 1) > slotCost, 'each slot costs more than the last');
+  if (me(run).pt < slotCost) {
+    await park(mm, run);
+    await runRight(run, () => me(run).pt >= slotCost, 'bank enough points for a slot', 12000);
+  }
+  const ptsBeforeSlot = me(run).pt;
+  run.send({ t: 'slot' });
+  await waitFor(() => me(run).sx === mm.set.slotStart + 1, 'a slot is bought');
+  assert.strictEqual(me(run).pt, ptsBeforeSlot - slotCost, 'and paid for');
+  run.send({ t: 'upgrade', key: 'medkit' });
+  await waitFor(() => me(run).up.medkit >= 1, 'now the fifth ability fits');
+
+  /* dropping one hands most of the points back and frees the slot again */
+  const ptsBeforeDrop = me(run).pt;
+  run.send({ t: 'drop', key: 'decoy' });
+  await waitFor(() => me(run).up.decoy === 0, 'an ability can be dropped');
+  assert.ok(me(run).pt > ptsBeforeDrop, 'for most of its points back');
+  run.send({ t: 'upgrade', key: 'decoy' });
+  await waitFor(() => me(run).up.decoy >= 1, 'and the freed slot takes something again');
+
   /* ---- every runner ability ---------------------------------------------- */
-  for (const k of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'dash', 'emp', 'ghost']) {
+  await park(mm, run);
+  await runRight(run, () => me(run).pt >= 80, 'bank enough points for the whole kit', 20000);
+  await setOpt(mm, 'slotStart', 9);
+  await waitFor(() => me(run).sx >= 9, 'raising the setting hands out the slots live');
+  for (const k of ['blink', 'shield', 'decoy', 'surge', 'medkit', 'dash', 'emp', 'ghost', 'nova']) {
     run.send({ t: 'upgrade', key: k });
   }
-  await waitFor(() => ['blink', 'shield', 'decoy', 'surge', 'medkit', 'dash', 'emp', 'ghost']
+  await waitFor(() => ['blink', 'shield', 'decoy', 'surge', 'medkit', 'dash', 'emp', 'ghost', 'nova']
     .every(k => me(run).up[k] >= 1), 'every ability is bought');
 
   run.send({ t: 'input', dx: 1, dy: 0 });
@@ -275,6 +450,77 @@ async function main() {
   run.send({ t: 'act', a: 'ghost' });
   await waitFor(() => me(run).gh === 1, 'ghost is running');
   await waitFor(() => me(run).cd.blink > 0 && me(run).cd.shield > 0, 'abilities went on cooldown');
+
+  /* ---- the ultimate ------------------------------------------------------- */
+  /* One slot, one SUPER BUFF, one enormous cooldown, and a potency that is the
+     chosen stat raised to the 2.5 -- capped per stat, because a thirty times
+     move speed is not a super buff, it is a crash. */
+  assert.strictEqual(RULES.ULT_EXP, 2.5, 'the potency exponent is the one that was asked for');
+  for (const k in RULES.ULTS) {
+    const u = RULES.ULTS[k];
+    assert.ok(u.name && u.icon && u.stat && u.cap, k + ' is a complete SUPER BUFF');
+    assert.ok(RULES.ultMul(k, 1) > 1.5, k + ' at level 1 is already a big number');
+    assert.ok(RULES.ultMul(k, 99) <= u.cap, k + ' never passes its own cap');
+  }
+  assert.ok(RULES.ultPotency(2) > RULES.ultPotency(1), 'levelling the ultimate makes it stronger');
+  assert.ok(RULES.ultPotency(1) > Math.pow(1.6, 2) , 'and the exponent is doing real work');
+
+  run.msgs.length = 0;
+  run.send({ t: 'ult' });
+  await sleep(150);
+  assert.strictEqual(me(run).uu, 0, 'the ultimate does nothing before it is bought');
+  assert.ok(run.msgs.some(t => /Buy the ultimate slot/.test(t)), 'and says so');
+  const ultCost = RULES.ultCost(mm.set, 0);
+  assert.ok(RULES.ultCost(mm.set, 1) > ultCost, 'the next level costs more');
+  run.send({ t: 'upgrade', key: 'ultimate' });
+  await waitFor(() => me(run).up.ultimate === 1, 'the ultimate slot is bought');
+  run.msgs.length = 0;
+  run.send({ t: 'ult' });
+  await sleep(150);
+  assert.strictEqual(me(run).uu, 0, 'still nothing with no SUPER BUFF chosen');
+  assert.ok(run.msgs.some(t => /SUPER BUFF/.test(t)), 'and it asks for one');
+  run.send({ t: 'pickUlt', u: 'flash' });
+  await waitFor(() => me(run).ul === 'flash', 'Flash Step is loaded into the slot');
+  run.send({ t: 'ult' });
+  await waitFor(() => me(run).uu > 0, 'and it fires');
+  assert.ok(me(run).uc > 60000, 'onto a very long cooldown (' + Math.round(me(run).uc / 1000) + 's)');
+  run.send({ t: 'pickUlt', u: 'iron' });
+  await sleep(150);
+  assert.strictEqual(me(run).ul, 'flash', 'the choice cannot be swapped mid-flight');
+  await waitFor(() => me(run).uu === 0, 'the ultimate runs out', 9000);
+  run.send({ t: 'pickUlt', u: 'iron' });
+  await waitFor(() => me(run).ul === 'iron', 'and can be re-chosen once it is done');
+  run.send({ t: 'pickUlt', u: 'flash' });
+  await waitFor(() => me(run).ul === 'flash', 'back to Flash Step');
+
+  /* ---- healing nova ------------------------------------------------------- */
+  /* Heals you and anyone within two blocks, which is the only ability in the
+     game that helps somebody else. */
+  const novaDef = RULES.ability.nova(1);
+  assert.strictEqual(novaDef.radius, 80, 'the nova reaches exactly two blocks');
+  assert.ok(novaDef.heal > 0, 'and heals something');
+  const mate = await client('Buddy', 'runner', code);
+  await park(mm, run);
+  await waitFor(() => mate.state.r.length === 2, 'a second runner joined');
+  /* hurt them both, then heal them both with one press. A pulse, because it
+     hits everything in range at once and two runners standing on the same
+     start tile would otherwise share a single bolt between them. */
+  mm.send({ t: 'tower', type: 'pulse', x: SX, y: ROW - 1 });
+  await waitFor(() => twAt(mm, SX, ROW - 1), 'a pulse to do the hurting');
+  const lowBoth = () => run.state.r.length === 2 && run.state.r.every(r => r.hp < r.mh - 15 && !r.d);
+  await waitFor(lowBoth, 'both runners are hurt', 20000);
+  mm.send({ t: 'sell', x: SX, y: ROW - 1 });
+  await sleep(120);
+  const before2 = {};
+  for (const r of run.state.r) before2[r.id] = r.hp;
+  run.send({ t: 'act', a: 'nova' });
+  await waitFor(() => run.state.r.every(r => r.hp > before2[r.id] + 10),
+    'one nova heals both runners at once', 3000);
+  assert.ok(RULES.healPow({ healpow: 6 }) > RULES.healPow({ healpow: 0 }),
+    'Healing Power multiplies what a nova is worth');
+  mate.ws.close();
+  await sleep(200);
+  await park(mm, run);
 
   /* ---- traps -------------------------------------------------------------- */
   mm.send({ t: 'tower', type: 'portal', x: SX + 2, y: ROW });
@@ -377,7 +623,10 @@ async function main() {
   const before = mm.towers.map(t => RULES.upgrades(t.up));
   assert.ok(before.every(n => n === 0), 'the fresh spikes start unupgraded');
   let bill = 0;
-  for (const t of mm.towers) bill += RULES.trackCost(mm.set, D.TRAPS.spikes, RULES.upgrades(t.up));
+  for (const t of mm.towers) {
+    bill += RULES.trackCost(mm.set, D.TRAPS.spikes, RULES.upgrades(t.up), t.up.dmg || 0,
+                            D.TRAPS.spikes.tracks.length);
+  }
   const goldBefore = mm.state.gold;
   mm.send({ t: 'massUp', type: 'spikes', track: 'dmg' });
   await waitFor(() => mm.towers.every(t => t.up.dmg === 1), 'every spike gained a damage level at once', 6000);
@@ -435,7 +684,7 @@ async function main() {
     'a new turret starts with all four of its upgrade tracks at zero');
   assert.ok(mm.state.gold <= gold0 - RULES.buildCost(mm.set, D.TOWERS.turret) + 40, 'gold was charged');
 
-  const upCost = RULES.trackCost(mm.set, D.TOWERS.turret, 0);
+  const upCost = RULES.trackCost(mm.set, D.TOWERS.turret, 0, 0, D.TOWERS.turret.tracks.length);
   const goldBeforeUp = mm.state.gold;
   mm.send({ t: 'tup', x: SX + 2, y: ROW - 1, track: 'dmg' });
   await waitFor(() => twAt(mm, SX + 2, ROW - 1).up.dmg === 1, 'damage track upgraded');
@@ -488,30 +737,65 @@ async function main() {
   const after = twAt(mm, SX + 2, ROW - 1);
   assert.strictEqual(RULES.form(after.up), RULES.MAX_FORM, 'the shape does not change any more');
   assert.ok(RULES.dmg(D.TOWERS.turret, after.up) > dmgAt35, 'but the damage still climbs');
-  /* and the cost climbed exponentially on the way */
-  /* The price curve is exponential in the building's total upgrades: every five
-     upgrades multiply it by the same factor, all the way up. */
+  /* ---- how a building upgrade is priced ---------------------------------
+   * The base climbs with the building's TOTAL upgrades, steeply at first and
+   * then flattening off, because the late game is where the Mastermind is
+   * meant to get frightening -- the thirtieth upgrade must not cost a hundred
+   * times the first. On top of that each track is priced RELATIVE to the
+   * building's average: a track nobody has touched is cheap, a track you have
+   * poured everything into is dear. */
   const base = { twGrow: 100 };
+  const nT = D.TOWERS.turret.tracks.length;
+  const even = n => RULES.trackCost(base, D.TOWERS.turret, n, n / nT, nT);   /* spread evenly */
   const curve = [];
-  for (let n = 0; n <= 30; n += 5) curve.push(RULES.trackCost(base, D.TOWERS.turret, n));
-  const perFive = Math.pow(RULES.TRACK_EXP, 5);
+  for (let n = 0; n <= 30; n += 5) curve.push(even(n));
   for (let i = 1; i < curve.length; i++) {
-    const ratio = curve[i] / curve[i - 1];
-    assert.ok(Math.abs(ratio - perFive) < perFive * 0.04,
-      'five more upgrades multiply the price by about ' + perFive.toFixed(2) + ', got ' + ratio.toFixed(2));
+    assert.ok(curve[i] > curve[i - 1], 'upgrade ' + (i * 5) + ' costs more than upgrade ' + ((i - 1) * 5));
   }
-  assert.ok(curve[6] > curve[0] * 100,
-    'the last form costs two orders of magnitude more than the first upgrade (' +
-    curve[0] + ' -> ' + curve[6] + ')');
-  /* and a one-track trap is no further from its final form than a three-track tower */
-  const trapTotal = [], towerTotal = [];
-  for (let n = 0; n < 30; n++) {
-    trapTotal.push(RULES.trackCost(base, D.TRAPS.glue, n));
-    towerTotal.push(RULES.trackCost(base, D.TOWERS.turret, n));
+  /* measured on the unrounded curve: whole-gold rounding wobbles the ratio of
+     two small numbers by more than the shape of the curve does */
+  for (let n = 10; n <= 30; n += 5) {
+    const late = RULES.growth(n) / RULES.growth(n - 5);
+    const early = RULES.growth(n - 5) / RULES.growth(n - 10);
+    assert.ok(late <= early + 1e-9,
+      'the price curve flattens instead of steepening (' + early.toFixed(3) + ' then ' + late.toFixed(3) + ')');
+  }
+  assert.ok(curve[6] / curve[0] < 30,
+    'a fully grown building costs a bearable multiple of the first upgrade, not a hundred times it (' +
+    (curve[6] / curve[0]).toFixed(1) + 'x)');
+  assert.ok(curve[6] > curve[0] * 4, 'but it is still a real climb');
+
+  /* un-upgraded tracks stay cheap; over-fed ones get expensive */
+  const total = 12;
+  const neglected = RULES.trackCost(base, D.TOWERS.turret, total, 0, nT);
+  const average   = RULES.trackCost(base, D.TOWERS.turret, total, total / nT, nT);
+  const hogged    = RULES.trackCost(base, D.TOWERS.turret, total, total, nT);
+  assert.ok(neglected < average, 'a track you have never touched is cheaper than an average one');
+  assert.ok(hogged > average * 1.5, 'and one you have poured everything into is much dearer');
+  assert.ok(neglected < hogged / 3, 'the spread between the two is worth playing around');
+
+  /* a one-track trap is not punished for having nowhere else to spend: its one
+     track IS its average, so the relative term is always exactly 1 */
+  for (const n of [0, 7, 19, 30]) {
+    assert.strictEqual(RULES.trackCost(base, D.TRAPS.glue, n, n, 1),
+      Math.max(1, Math.round(D.TRAPS.glue.cost * 0.5 * RULES.growth(n))),
+      'a single-track trap is priced on its total alone');
   }
   const sum = a => a.reduce((x, y) => x + y, 0);
+  const trapTotal = [], towerTotal = [];
+  for (let n = 0; n < 30; n++) {
+    trapTotal.push(RULES.trackCost(base, D.TRAPS.glue, n, n, 1));
+    towerTotal.push(RULES.trackCost(base, D.TOWERS.turret, n, n / nT, nT));
+  }
   assert.ok(Math.abs(sum(trapTotal) / D.TRAPS.glue.cost - sum(towerTotal) / D.TOWERS.turret.cost) < 1,
-    'reaching the final form costs the same multiple of build cost for a one-track trap as a three-track tower');
+    'reaching the final form costs the same multiple of build cost for a one-track trap as a four-track tower');
+
+  /* towers themselves got dearer, the sniper most of all, and upgrades got
+     cheaper late -- the early-nerf, late-buff trade the Mastermind asked for */
+  assert.ok(D.TOWERS.sniper.cost >= 250, 'the sniper is properly expensive now (' + D.TOWERS.sniper.cost + ')');
+  assert.ok(D.TOWERS.sniper.cost > D.TOWERS.turret.cost * 4, 'and costs several turrets');
+  assert.ok(RULES.growth(30) < Math.pow(RULES.TRACK_EXP, 30),
+    'the late game is cheaper than a flat exponential would have made it');
   mm.send({ t: 'sell', x: SX + 2, y: ROW - 1 });
   await waitFor(() => !twAt(mm, SX + 2, ROW - 1), 'the overgrown turret is sold again');
   await setOpt(mm, 'twGrow', 100);
@@ -557,6 +841,161 @@ async function main() {
   const g2 = mm.state.gold;
   await sleep(800);
   assert.ok(mm.state.gold - g2 < 5, 'zero income pays nothing');
+
+  /* ---- new ground: steep climbs and tunnels ------------------------------ */
+  /* Two more kinds of tile, so a track is not just a corridor of the same
+     stuff. Steep ground slows you down; a tunnel mouth drops you out of its
+     partner somewhere else entirely. */
+  await park(mm, run);
+  mm.send({ t: 'clearTowers' });
+  await waitFor(() => (mm.towers || []).length === 0, 'board cleared for the terrain tests');
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'edit mode for painting new ground');
+  for (let x = SX + 3; x <= SX + 5; x++) mm.send({ t: 'paint', x, y: ROW, tile: T.STEEP });
+  await waitFor(() => run.grid.tiles[ROW * mm.set.gw + SX + 4] === T.STEEP, 'steep ground reaches the runner');
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'live on the new ground');
+  await setOpt(mm, 'steepSlow', 80);
+  await park(mm, run);
+  await runRight(run, () => me(run).st === 1, 'the runner is slowed by the climb', 8000);
+  /* a trap still goes on steep ground: it is path, just harder path */
+  mm.send({ t: 'tower', type: 'spikes', x: SX + 4, y: ROW });
+  await waitFor(() => twAt(mm, SX + 4, ROW), 'traps can be laid on steep ground');
+  mm.send({ t: 'sell', x: SX + 4, y: ROW });
+  await waitFor(() => !twAt(mm, SX + 4, ROW), 'and sold again');
+  mm.send({ t: 'tower', type: 'turret', x: SX + 3, y: ROW });
+  await sleep(150);
+  assert.ok(!twAt(mm, SX + 3, ROW), 'but a tower still cannot stand on it');
+
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'edit mode for the tunnels');
+  for (let x = SX + 3; x <= SX + 5; x++) mm.send({ t: 'paint', x, y: ROW, tile: T.PATH });
+  mm.send({ t: 'paint', x: SX + 2, y: ROW, tile: T.TUNNEL });
+  mm.send({ t: 'paint', x: EX - 1, y: ROW, tile: T.TUNNEL });
+  await waitFor(() => run.grid.tiles[ROW * mm.set.gw + SX + 2] === T.TUNNEL &&
+                      run.grid.tiles[ROW * mm.set.gw + EX - 1] === T.TUNNEL, 'two tunnel mouths painted');
+  const par = tunnelPartner(room, SX + 2, ROW);
+  assert.ok(par && par.x === EX - 1, 'the two mouths pair up in reading order');
+  assert.strictEqual(tunnelPartner(room, EX - 1, ROW).x, SX + 2, 'and pair up both ways');
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'live with tunnels');
+  await park(mm, run);
+  await runRight(run, () => me(run).x > startPx(EX - 2), 'the tunnel throws the runner across the board', 8000);
+
+  /* ---- several STARTs and several ENDs ------------------------------------ */
+  mm.send({ t: 'mode', edit: true });
+  await waitFor(() => mm.state.edit === 1, 'edit mode for the second END');
+  mm.send({ t: 'paint', x: SX + 2, y: ROW, tile: T.PATH });
+  mm.send({ t: 'paint', x: EX - 1, y: ROW, tile: T.PATH });
+  await sleep(150);
+  assert.strictEqual(mm.set.multiEnds, 0, 'one START and one END by default');
+  mm.send({ t: 'paint', x: EX - 2, y: ROW, tile: T.END });
+  await waitFor(() => run.grid.tiles[ROW * mm.set.gw + EX - 2] === T.END, 'a second END is painted');
+  await sleep(150);
+  assert.strictEqual(findTiles(room, T.END).length, 1, 'which replaces the first one while the option is off');
+  await setOpt(mm, 'multiEnds', 1);
+  mm.send({ t: 'paint', x: EX, y: ROW, tile: T.END });
+  await waitFor(() => findTiles(room, T.END).length === 2, 'with the option on, both ENDs stay');
+  mm.send({ t: 'paint', x: SX + 1, y: ROW, tile: T.START });
+  await waitFor(() => findTiles(room, T.START).length === 2, 'and so do two STARTs');
+  assert.ok(pathConnected(room), 'both starts still reach an end');
+  /* a start walled off from every end is refused, because somebody would spawn
+     into a box and never get out */
+  mm.send({ t: 'paint', x: 0, y: 0, tile: T.START });
+  await waitFor(() => findTiles(room, T.START).length === 3, 'a third START, stranded in a corner');
+  assert.ok(!pathConnected(room), 'a stranded START breaks the connection check');
+  mm.msgs.length = 0;
+  mm.send({ t: 'mode', edit: false });
+  await sleep(250);
+  assert.strictEqual(mm.state.edit, 1, 'so the round cannot go live');
+  assert.ok(mm.msgs.some(t => /every START needs a walkable route/i.test(t)), 'and says exactly why');
+  mm.send({ t: 'paint', x: 0, y: 0, tile: T.EMPTY });
+  await sleep(120);
+  await setOpt(mm, 'multiEnds', 0);
+  await paintTrack(mm);
+  mm.send({ t: 'mode', edit: false });
+  await waitFor(() => mm.state.edit === 0, 'back to one clean straight track');
+  await park(mm, run);
+
+  /* ---- barrier, resists and the elements --------------------------------- */
+  /* The barrier is a second bar that eats damage before health and grows back
+     out of combat -- the difference between it and the Shield ability is that
+     you never have to remember to press it. */
+  assert.strictEqual(RULES.barrierMax(mm.set, { barrier: 0 }), 0, 'no barrier until you buy one');
+  assert.ok(RULES.barrierMax(mm.set, { barrier: 3 }) > 0, 'and a real one once you do');
+  for (let i = 0; i < 4; i++) run.send({ t: 'upgrade', key: 'barrier' });
+  await waitFor(() => me(run).up.barrier === 4, 'four levels of barrier bought');
+  await waitFor(() => me(run).bm > 0 && me(run).ba >= me(run).bm, 'it fills up out of combat', 12000);
+  const fullHp = me(run).hp, fullBa = me(run).ba;
+  mm.send({ t: 'tower', type: 'turret', x: SX, y: ROW - 2 });
+  await waitFor(() => twAt(mm, SX, ROW - 2), 'a turret to test it against');
+  await waitFor(() => me(run).ba < fullBa, 'the barrier takes the hit', 15000);
+  assert.strictEqual(me(run).hp, fullHp, 'and health is untouched while it lasts');
+  mm.send({ t: 'sell', x: SX, y: ROW - 2 });
+  await waitFor(() => me(run).ba >= me(run).bm, 'and it grows back once nothing is shooting', 15000);
+
+  /* elemental resists stack with Armor by adding resistance, not by
+     multiplying it, so the second one you buy is never wasted */
+  const armorOnly = { armor: 6, resFire: 0 };
+  const both = { armor: 6, resFire: 6 };
+  assert.strictEqual(RULES.resistPct({ armor: 0 }, 'fire'), 0, 'no resist with nothing bought');
+  assert.ok(RULES.resistPct(both, 'fire') > RULES.resistPct(armorOnly, 'fire'),
+    'fire resist adds on top of armor');
+  assert.strictEqual(RULES.resistPct(both, 'energy'), RULES.resistPct(armorOnly, 'energy'),
+    'and does nothing at all against energy');
+  assert.ok(RULES.resistPct({ armor: 999 }, 'fire') < 1, 'resistance can never reach immunity');
+  for (const el of ['bullet', 'fire', 'energy']) {
+    assert.ok(Object.keys(D.BUILD).some(k => D.BUILD[k].el === el),
+      'something in the game deals ' + el + ' damage');
+  }
+  assert.ok(RULES.trapMul({ trapres: 5 }) < 1, 'trap resist reduces trap damage');
+  assert.strictEqual(RULES.trapMul({ trapres: 0 }), 1, 'and does nothing unbought');
+  assert.ok(RULES.oocPerSec({ oocheal: 4 }) > RULES.regenPerSec({ regen: 4 }),
+    'out of combat healing scales better than regen, which is the trade');
+
+  /* ---- the ghost nerf ----------------------------------------------------- */
+  /* It used to be invulnerability with no counterplay. Now it hides you from
+     towers, it breaks when a trap bites, and it is worth nothing on the END. */
+  await setOpt(mm, 'escapeBase', 8);
+  await park(mm, run);
+  mm.send({ t: 'tower', type: 'spikes', x: SX + 3, y: ROW });
+  await waitFor(() => twAt(mm, SX + 3, ROW), 'spikes on the path');
+  await waitFor(() => me(run).cd.ghost === 0, 'ghost is off cooldown', 20000);
+  run.send({ t: 'act', a: 'ghost' });
+  await waitFor(() => me(run).gh === 1, 'ghost is up');
+  await runRight(run, () => me(run).fk === 1, 'stepping on a trap makes it flicker', 8000);
+  assert.strictEqual(me(run).gh, 0, 'and while it flickers the towers can see you again');
+  mm.send({ t: 'sell', x: SX + 3, y: ROW });
+  await waitFor(() => !twAt(mm, SX + 3, ROW), 'spikes sold');
+
+  await park(mm, run);
+  await waitFor(() => me(run).cd.ghost === 0, 'ghost is ready again', 25000);
+  await runRight(run, () => me(run).esc > 0, 'the runner reaches the END and starts the clock', 9000);
+  run.msgs.length = 0;
+  run.send({ t: 'act', a: 'ghost' });
+  await sleep(250);
+  assert.strictEqual(me(run).gh, 0, 'ghost refuses to hide a runner standing on the END');
+  assert.ok(run.msgs.some(t => /nothing while you are standing on the END/.test(t)), 'and says so');
+  run.send({ t: 'input', dx: 0, dy: 0 });
+  await setOpt(mm, 'escapeBase', 0.4);
+  await park(mm, run);
+
+  /* ---- mastermind gold upgrades ------------------------------------------ */
+  /* The other half of the late-game buff: gold spent on the Mastermind
+     themselves rather than on any one building. */
+  for (const k of ['lockdown', 'siege', 'bounty']) {
+    assert.ok(D.MM_UPGRADES[k], 'mastermind upgrade ' + k + ' is defined');
+    assert.ok(RULES.mmUpCost(mm.set, D.MM_UPGRADES[k], 1) > RULES.mmUpCost(mm.set, D.MM_UPGRADES[k], 0),
+      k + ' costs more each level');
+  }
+  await bankroll(mm, 5000);
+  const lockCost = RULES.mmUpCost(mm.set, D.MM_UPGRADES.lockdown, 0);
+  const goldPre = mm.state.gold;
+  mm.send({ t: 'mmup', key: 'lockdown' });
+  await waitFor(() => room.mmUp.lockdown === 1, 'Lockdown bought');
+  await waitFor(() => mm.state.gold <= goldPre - lockCost + 2, 'and paid for (' + lockCost + ' gold)');
+  await waitFor(() => mm.ul && mm.ul.up && mm.ul.up.lockdown === 1, 'the client is told about it');
+  assert.ok(RULES.escapeMs(mm.set, 0, 1) > RULES.escapeMs(mm.set, 0, 0), 'and the END hold got longer');
 
   /* ---- winning the round ------------------------------------------------- */
   mm.send({ t: 'clearTowers' });

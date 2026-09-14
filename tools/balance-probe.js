@@ -4,7 +4,7 @@
 'use strict';
 process.env.PORT = '18799';
 const WebSocket = require('ws');
-const { server } = require('../server.js');
+const { server, rooms, DEFS } = require('../server.js');
 
 const URL = 'ws://localhost:18799';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -34,8 +34,14 @@ async function run(label, tweak, plan) {
   const code = mm.welcome.room;
   const rn = await client('Runner', 'runner', code);
   mm.send({ t: 'mode', edit: true }); await sleep(250);
+  /* The armoury is earned in a real game; a probe is not a real game, so open
+     it outright and measure the defence rather than the unlock pace. */
+  const room = rooms.get(code);
+  room.unlockPts = DEFS.UNLOCKABLE.length + 2;
+  for (const k of DEFS.UNLOCKABLE) mm.send({ t: 'unlock', key: k });
+  await sleep(200);
   await set(mm, 'gw', 20); await set(mm, 'gh', 12);
-  await set(mm, 'startGold', 900);
+  await set(mm, 'startGold', 1600);   /* buildings cost more than they used to */
   await set(mm, 'vpTarget', 100);           /* long enough not to end early */
   if (tweak) await tweak(mm);
   mm.send({ t: 'preset', name: 'blank' }); await sleep(200);
@@ -51,7 +57,7 @@ async function run(label, tweak, plan) {
   for (const [ty, x, y] of plan) mm.send({ t: 'tower', type: ty, x, y });
   await sleep(600);
   const built = (mm.towers || []).length;
-  const spent = 900 - mm.state.gold;
+  const spent = 1600 - mm.state.gold;
 
   rn.send({ t: 'input', dx: 1, dy: 0 });
   const t0 = Date.now();

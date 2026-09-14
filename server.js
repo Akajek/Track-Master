@@ -48,31 +48,48 @@ const server = http.createServer((req, res) => {
 const CELL = 40;
 const TICK_MS = 50;
 const RUNNER_R = 11;
-const T = { EMPTY: 0, PATH: 1, START: 2, END: 3 };
+/* Six kinds of ground. STEEP is path you climb slowly; TUNNEL is path that
+   drops you out of its partner mouth somewhere else on the board. */
+const T = { EMPTY: 0, PATH: 1, START: 2, END: 3, STEEP: 4, TUNNEL: 5 };
+const TILE_MAX = 5;
 const MAX_EVENTS = 240;
-const SPAWN_GRACE = 1500;      /* invulnerable for a moment after (re)spawning */
+const SPAWN_GRACE = 1500;      /* genuinely invulnerable for a moment after spawning */
+const FLICKER_MS = 900;        /* how long a trap gives your position away */
+const TUNNEL_CD = 700;         /* so the two mouths do not ping-pong you forever */
 
 /* Every knob the Mastermind can turn before a round. The client builds the
    settings panel straight from this table, so adding a row here is all it takes
-   to get a working slider. */
+   to get a working slider (or, with bool:1, a working toggle). */
 const SETTINGS = {
   gw:         { g: 'Map',     label: 'Map width',               min: 12,  max: 48,    step: 1,   def: 24, rebuild: 1 },
   gh:         { g: 'Map',     label: 'Map height',              min: 10,  max: 32,    step: 1,   def: 16, rebuild: 1 },
+  multiEnds:  { g: 'Map',     label: 'Several STARTs and ENDs',  min: 0,  max: 1,     step: 1,   def: 0, bool: 1,
+    help: 'On: every START and END you paint stays. Runners spawn at a random START and may escape from any END.' },
+  steepSlow:  { g: 'Map',     label: 'Steep ground slow %',      min: 10, max: 90,    step: 5,   def: 45 },
   towerPower: { g: 'Balance', label: 'Tower damage %',          min: 10,  max: 300,   step: 5,   def: 100 },
   runnerHp:   { g: 'Balance', label: 'Runner health %',         min: 25,  max: 400,   step: 5,   def: 100 },
-  runSpeed:   { g: 'Balance', label: 'Base runner speed',       min: 60,  max: 600,   step: 10,  def: 165 },
+  runSpeed:   { g: 'Balance', label: 'Base runner speed',       min: 60,  max: 600,   step: 10,  def: 170 },
   respawn:    { g: 'Balance', label: 'Respawn seconds',         min: 0.5, max: 20,    step: 0.5, def: 2.5 },
+  escapeBase: { g: 'Escape',  label: 'END hold seconds',        min: 0,   max: 10,    step: 0.1, def: 0.5,
+    help: 'How long a runner has to stand on an END tile to escape. The timer resets the instant they step off.' },
+  escapeLap:  { g: 'Escape',  label: '+ seconds per runner win', min: 0,  max: 3,     step: 0.05, def: 0.25 },
+  endResist:  { g: 'Escape',  label: 'END damage resistance %',  min: 0,  max: 90,    step: 5,   def: 40,
+    help: 'Damage taken while standing on an END tile, reduced by this much. Makes holding the END possible.' },
   vpTarget:   { g: 'Victory', label: 'Victory points to win',   min: 3,   max: 100,   step: 1,   def: 15 },
   vpFinish:   { g: 'Victory', label: 'VP per runner finish',    min: 1,   max: 20,    step: 1,   def: 2 },
   vpKill:     { g: 'Victory', label: 'VP per runner killed',    min: 1,   max: 20,    step: 1,   def: 1 },
   startGold:  { g: 'Income',  label: 'Mastermind start gold',   min: 0,   max: 20000, step: 100, def: 300 },
   income:     { g: 'Income',  label: 'Gold per second',         min: 0,   max: 120,   step: 1,   def: 6 },
-  incomeGrow: { g: 'Income',  label: 'Income growth %/min',     min: 0,   max: 400,   step: 5,   def: 12 },
+  incomeGrow: { g: 'Income',  label: 'Income growth %/min',     min: 0,   max: 400,   step: 5,   def: 18 },
   goldKill:   { g: 'Income',  label: 'Gold per kill',           min: 0,   max: 1500,  step: 25,  def: 40 },
   goldFinish: { g: 'Income',  label: 'Gold per runner finish',  min: 0,   max: 1500,  step: 25,  def: 25 },
+  unlockRate: { g: 'Income',  label: 'Damage per unlock %',     min: 25,  max: 400,   step: 5,   def: 100,
+    help: 'The Mastermind earns unlock points by hurting runners. Lower means the armoury opens sooner.' },
   ptsFinish:  { g: 'Runners', label: 'Upgrade points / finish', min: 1,   max: 60,    step: 1,   def: 5 },
   ptsDeath:   { g: 'Runners', label: 'Upgrade points / death',  min: 0,   max: 30,    step: 1,   def: 2 },
-  lapBonus:   { g: 'Runners', label: 'Lap bonus % per finish',  min: 0,   max: 60,    step: 1,   def: 6 },
+  lapBonus:   { g: 'Runners', label: 'Lap bonus % per finish',  min: 0,   max: 60,    step: 1,   def: 4 },
+  slotStart:  { g: 'Runners', label: 'Free ability slots',      min: 1,   max: 9,     step: 1,   def: 4,
+    help: 'How many abilities a runner can hold before buying more slots.' },
   upGrow:     { g: 'Scaling', label: 'Runner upgrade cost %',   min: 10,  max: 400,   step: 5,   def: 100 },
   twGrow:     { g: 'Scaling', label: 'Tower upgrade cost %',    min: 10,  max: 400,   step: 5,   def: 100 },
   towerCost:  { g: 'Scaling', label: 'Tower build cost %',      min: 10,  max: 400,   step: 5,   def: 100 },
@@ -80,52 +97,59 @@ const SETTINGS = {
 
 
 /* ----------------------------------------------------------------- buildings */
-/* kind decides how the tick treats it. tracks are the upgrade lines it sells. */
+/* kind decides how the tick treats it. tracks are the upgrade lines it sells.
+   el is the damage element, which the runner's elemental resists answer. */
 const TOWERS = {
-  turret: { name: 'Turret', cost: 50,  kind: 'shoot',   range: 135, dmg: 10, rate: 2.0, proj: 215,
+  turret: { name: 'Turret', cost: 55,  kind: 'shoot',   range: 135, dmg: 10, rate: 2.0, proj: 215, el: 'bullet',
     color: '#7dd3fc', tracks: ['dmg', 'rng', 'spd', 'vel'], desc: 'Reliable single-target shooter.',
     forms: ['Turret', 'Twin Turret', 'Autocannon', 'Gatling', 'Vulcan', 'Warmachine', 'Annihilator'] },
-  sniper: { name: 'Sniper', cost: 150, kind: 'hitscan', range: 250, dmg: 34, rate: 0.4,
-    color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow.',
+  sniper: { name: 'Sniper', cost: 260, kind: 'hitscan', range: 250, dmg: 30, rate: 0.36, el: 'bullet',
+    color: '#f9a8d4', tracks: ['dmg', 'rng', 'spd'], desc: 'Very long range, big hits, slow. Expensive for a reason.',
     forms: ['Sniper', 'Marksman', 'Longshot', 'Railgun', 'Deadeye', 'Executioner', 'Godshot'] },
-  mortar: { name: 'Mortar', cost: 170, kind: 'lob',     range: 240, minRange: 70, dmg: 36, splash: 62, rate: 0.5, proj: 240,
+  mortar: { name: 'Mortar', cost: 220, kind: 'lob',     range: 240, minRange: 70, dmg: 36, splash: 62, rate: 0.5, proj: 240, el: 'fire',
     color: '#fdba74', tracks: ['dmg', 'rng', 'spd', 'pow', 'vel'], desc: 'Lobs shells. Splash damage. Blind up close.',
     forms: ['Mortar', 'Howitzer', 'Siege Mortar', 'Bombard', 'Artillery', 'Devastator', 'Apocalypse'] },
-  tesla:  { name: 'Tesla',  cost: 140, kind: 'chain',   range: 120, dmg: 15, rate: 1.0, chain: 3, chainRange: 95,
+  tesla:  { name: 'Tesla',  cost: 170, kind: 'chain',   range: 120, dmg: 15, rate: 1.0, chain: 3, chainRange: 95, el: 'energy',
     color: '#c4b5fd', tracks: ['dmg', 'rng', 'spd'], desc: 'Zaps a runner, chains to nearby ones.',
     forms: ['Tesla Coil', 'Arc Coil', 'Storm Coil', 'Thunderhead', 'Tempest', 'Maelstrom', 'Zeus'] },
-  pulse:  { name: 'Pulse',  cost: 180, kind: 'pulse',   range: 110, dmg: 24, rate: 0.6,
+  pulse:  { name: 'Pulse',  cost: 210, kind: 'pulse',   range: 110, dmg: 24, rate: 0.6, el: 'energy',
     color: '#22d3ee', tracks: ['dmg', 'rng', 'spd'], desc: 'Slams everything around it. Never misses.',
     forms: ['Pulse Node', 'Shockwave', 'Resonator', 'Quake Node', 'Cataclysm', 'Seismic Core', 'Singularity'] },
-  laser:  { name: 'Laser',  cost: 210, kind: 'beam',    range: 175, dps: 12, rampMax: 2.2, rampTime: 3,
-    color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds.',
+  laser:  { name: 'Laser',  cost: 250, kind: 'beam',    range: 175, dps: 12, rampMax: 2.2, rampTime: 3, el: 'energy',
+    color: '#ef4444', tracks: ['dmg', 'rng'], desc: 'Holds a beam. Burns hotter the longer it holds. Cannot be dodged.',
     forms: ['Laser', 'Beam Emitter', 'Focused Beam', 'Prism Lance', 'Solar Lance', 'Starfire', 'Nova Lance'] },
-  flame:  { name: 'Flamer', cost: 100, kind: 'aura',    range: 74,  dps: 17,
+  flame:  { name: 'Flamer', cost: 120, kind: 'aura',    range: 74,  dps: 17, el: 'fire',
     color: '#fb7185', tracks: ['dmg', 'rng'], desc: 'Short range. Burns everything nearby, constantly.',
     forms: ['Flamer', 'Burner', 'Incinerator', 'Pyre', 'Inferno', 'Hellmouth', 'Sunforge'] },
-  frost:  { name: 'Frost',  cost: 90,  kind: 'slow',    range: 100, slow: 0.45,
+  frost:  { name: 'Frost',  cost: 110, kind: 'slow',    range: 100, slow: 0.45,
     color: '#a5f3fc', tracks: ['pow', 'rng'], desc: 'Slows every runner in range.',
     forms: ['Frost Emitter', 'Chiller', 'Cryo Node', 'Deep Freeze', 'Glacier', 'Absolute Zero', 'Winter'] },
 };
 const TRAPS = {
-  spikes: { name: 'Spikes', cost: 40,  kind: 'spikes', dmg: 16, cd: 1,
+  spikes: { name: 'Spikes', cost: 45,  kind: 'spikes', dmg: 16, cd: 1, el: 'bullet',
     color: '#d1d5db', tracks: ['dmg', 'spd'], desc: 'Bites whoever steps on it.',
     forms: ['Spikes', 'Barbs', 'Caltrops', 'Spike Pit', 'Impaler Bed', 'Spine Field', 'Thornmaw'] },
-  glue:   { name: 'Glue',   cost: 30,  kind: 'glue',   slow: 0.55,
+  glue:   { name: 'Glue',   cost: 35,  kind: 'glue',   slow: 0.55,
     color: '#bef264', tracks: ['pow'], desc: 'Very sticky. Slows anyone standing in it.',
     forms: ['Glue', 'Tar', 'Sludge', 'Quagmire', 'Tar Pit', 'Mire', 'Molasses Sea'] },
-  saw:    { name: 'Saw',    cost: 110, kind: 'saw',    dps: 28,
+  saw:    { name: 'Saw',    cost: 130, kind: 'saw',    dps: 28, el: 'bullet',
     color: '#94a3b8', tracks: ['dmg'], desc: 'Spinning blade. Shreds anyone standing on it.',
     forms: ['Saw', 'Buzzsaw', 'Ripper', 'Shredder', 'Mulcher', 'Bonesaw', 'Meatgrinder'] },
-  mine:   { name: 'Mine',   cost: 80,  kind: 'mine',   dmg: 65, splash: 66, once: 1,
+  mine:   { name: 'Mine',   cost: 95,  kind: 'mine',   dmg: 65, splash: 66, once: 1, el: 'fire',
     color: '#f97316', tracks: ['dmg', 'pow'], desc: 'One big blast, then it is gone for good.',
     forms: ['Mine', 'Charge', 'Bomb', 'Cluster Mine', 'Demolition Charge', 'Bunker Buster', 'Doomsday Mine'] },
-  snare:  { name: 'Snare',  cost: 90,  kind: 'snare',  root: 1, cd: 8,
+  snare:  { name: 'Snare',  cost: 105, kind: 'snare',  root: 1, cd: 8,
     color: '#fcd34d', tracks: ['pow', 'spd'], desc: 'Roots a runner in place. Cannot move at all.',
     forms: ['Snare', 'Trap Jaws', 'Bear Trap', 'Bramble Snare', 'Iron Maiden', 'Root Cage', 'Stasis Field'] },
-  portal: { name: 'Portal', cost: 140, kind: 'portal', cd: 14,
-    color: '#c084fc', tracks: ['spd'], desc: 'Sends the runner all the way back to the start.',
+  portal: { name: 'Portal', cost: 160, kind: 'portal', cd: 14,
+    color: '#c084fc', tracks: ['spd'], desc: 'Sends the runner all the way back to a start.',
     forms: ['Portal', 'Rift', 'Warp Gate', 'Void Gate', 'Wormhole', 'Event Horizon', 'Oblivion'] },
+  tar:    { name: 'Brazier', cost: 115, kind: 'brazier', dps: 20, cd: 0, el: 'fire',
+    color: '#f59e0b', tracks: ['dmg'], desc: 'A column of fire on the path. Burns, and fire resist answers it.',
+    forms: ['Brazier', 'Firepit', 'Flare Vent', 'Pyre Vent', 'Flame Geyser', 'Magma Vent', 'Caldera'] },
+  jolt:   { name: 'Jolt Plate', cost: 125, kind: 'jolt', dmg: 30, cd: 2.2, el: 'energy',
+    color: '#818cf8', tracks: ['dmg', 'spd'], desc: 'Energy plate. Discharges into whoever stands on it.',
+    forms: ['Jolt Plate', 'Shock Plate', 'Arc Plate', 'Surge Plate', 'Storm Plate', 'Overload Plate', 'Annihilation Plate'] },
 };
 for (const k in TRAPS) TRAPS[k].onPath = true;
 const BUILD = Object.assign({}, TOWERS, TRAPS);
@@ -139,45 +163,85 @@ const TRACKS = {
 };
 
 const MM_ABILITIES = {
-  meteor:  { name: 'Meteor',  cost: 100, cd: 8,  dmg: 70,  radius: 80, delay: 1.0, aim: 1, icon: '☄', desc: 'Click the board. Big boom after 1s.' },
+  meteor:  { name: 'Meteor',  cost: 100, cd: 8,  dmg: 70,  radius: 80, delay: 1.0, aim: 1, icon: '☄', el: 'fire', desc: 'Click the board. Big boom after 1s.' },
   freeze:  { name: 'Freeze',  cost: 150, cd: 20, dur: 1.6, icon: '❄', desc: 'Every runner stops dead for 1.6s.' },
-  barrage: { name: 'Barrage', cost: 260, cd: 30, dmg: 40, radius: 62, shells: 6, aim: 1, icon: '💥', desc: 'Six shells rain around the spot you pick.' },
+  barrage: { name: 'Barrage', cost: 260, cd: 30, dmg: 40, radius: 62, shells: 6, aim: 1, icon: '💥', el: 'fire', desc: 'Six shells rain around the spot you pick.' },
   overdrive: { name: 'Overdrive', cost: 300, cd: 40, dur: 6, icon: '⏩', desc: 'Every tower fires at double rate for 6s.' },
   blackout: { name: 'Blackout', cost: 180, cd: 35, dur: 5, icon: '🌑', desc: 'Runners lose every ability for 5s.' },
 };
 
-/* Runner upgrades. Nothing is capped: costs grow instead. */
+/* Mastermind upgrades. Bought with gold, kept for the round, and the main
+   reason a late-game Mastermind is frightening rather than merely rich. */
+const MM_UPGRADES = {
+  lockdown: { name: 'Lockdown', cost: 220, grow: 1.7,  icon: '⏳',
+    desc: '+0.35s on the END hold timer. Runners have to survive standing still for longer.' },
+  siege:    { name: 'Siege',    cost: 280, grow: 1.75, icon: '⚔',
+    desc: '+8% damage on every building you own, present and future.' },
+  bounty:   { name: 'Bounty',   cost: 200, grow: 1.6,  icon: '💰',
+    desc: '+25% gold from every kill.' },
+};
+
+/* Runner upgrades. Nothing is capped: the curves flatten instead. */
 const UPGRADES = {
-  speed:    { name: 'Speed',       kind: 'passive', desc: '+9% move speed' },
-  hp:       { name: 'Vitality',    kind: 'passive', desc: '+30 max HP' },
-  regen:    { name: 'Regen',       kind: 'passive', desc: '+3 HP/s, even while being shot' },
-  armor:    { name: 'Armor',       kind: 'passive', desc: 'Less damage taken (diminishing)' },
-  grip:     { name: 'Grip',        kind: 'passive', desc: 'Resist slows and glue' },
-  haste:    { name: 'Haste',       kind: 'passive', desc: 'Shorter ability cooldowns' },
-  momentum: { name: 'Momentum',    kind: 'passive', desc: 'Speeds up while you avoid damage' },
-  scholar:  { name: 'Scholar',     kind: 'passive', desc: '+1 upgrade point per finish' },
-  revive:   { name: 'Quick Revive', kind: 'passive', desc: 'Respawn faster' },
-  tough:    { name: 'Last Stand',  kind: 'passive', desc: 'Damage taken below 30% HP is reduced' },
-  dash:     { name: 'Dash',   kind: 'ability', key: 'Space', icon: '💨', desc: 'Burst forward through fire' },
-  emp:      { name: 'EMP',    kind: 'ability', key: 'E', icon: '⚡', desc: 'Disable nearby towers' },
-  ghost:    { name: 'Ghost',  kind: 'ability', key: 'Q', icon: '👻', desc: 'Brief invulnerability' },
-  blink:    { name: 'Blink',  kind: 'ability', key: 'F', icon: '✨', desc: 'Teleport forward along the path' },
-  shield:   { name: 'Shield', kind: 'ability', key: 'R', icon: '🛡', desc: 'Absorb a chunk of damage' },
-  decoy:    { name: 'Decoy',  kind: 'ability', key: 'C', icon: '👥', desc: 'Towers shoot your double instead' },
-  surge:    { name: 'Surge',  kind: 'ability', key: 'V', icon: '🚀', desc: 'Huge speed boost for a few seconds' },
-  medkit:   { name: 'Medkit', kind: 'ability', key: 'X', icon: '➕', desc: 'Heal yourself instantly' },
+  speed:     { name: 'Speed',        kind: 'passive', desc: '+6.5% move speed (diminishes hard past 15)' },
+  hp:        { name: 'Vitality',     kind: 'passive', desc: '+26 max HP' },
+  regen:     { name: 'Regen',        kind: 'passive', desc: '+2.6 HP/s, even while being shot' },
+  oocheal:   { name: 'Field Medic',  kind: 'passive', desc: '+7 HP/s once nothing has hit you for 2.5s' },
+  healpow:   { name: 'Healing Power', kind: 'passive', desc: '+12% from every source of healing you have' },
+  barrier:   { name: 'Barrier',      kind: 'passive', desc: '+30 barrier. Eats damage before health, regrows out of combat' },
+  armor:     { name: 'Armor',        kind: 'passive', desc: 'Less damage from everything' },
+  resBullet: { name: 'Bullet Resist', kind: 'passive', desc: 'Less damage from bullets, on top of Armor' },
+  resFire:   { name: 'Fire Resist',  kind: 'passive', desc: 'Less damage from fire, on top of Armor' },
+  resEnergy: { name: 'Energy Resist', kind: 'passive', desc: 'Less damage from energy, on top of Armor' },
+  trapres:   { name: 'Trap Resist',  kind: 'passive', desc: 'Less damage from damaging traps only' },
+  dodge:     { name: 'Dodge',        kind: 'passive', desc: 'Chance a bullet passes straight through you (35% ceiling)' },
+  deflect:   { name: 'Deflection',   kind: 'passive', desc: 'Chance to bat a bullet away (35% ceiling)' },
+  grip:      { name: 'Grip',         kind: 'passive', desc: 'Resist slows, glue and steep ground' },
+  haste:     { name: 'Haste',        kind: 'passive', desc: 'Shorter ability cooldowns' },
+  momentum:  { name: 'Momentum',     kind: 'passive', desc: 'Speeds up while you avoid damage' },
+  scholar:   { name: 'Scholar',      kind: 'passive', desc: '+1 upgrade point per finish' },
+  revive:    { name: 'Quick Revive', kind: 'passive', desc: 'Respawn faster' },
+  tough:     { name: 'Last Stand',   kind: 'passive', desc: 'Damage taken below 30% HP is reduced' },
+  dash:      { name: 'Dash',   kind: 'ability', key: 'Space', icon: '💨', desc: 'Burst forward through fire' },
+  emp:       { name: 'EMP',    kind: 'ability', key: 'E', icon: '⚡', desc: 'Disable nearby towers' },
+  ghost:     { name: 'Ghost',  kind: 'ability', key: 'Q', icon: '👻', desc: 'Towers cannot see you. Traps still bite, and it does nothing on the END.' },
+  blink:     { name: 'Blink',  kind: 'ability', key: 'F', icon: '✨', desc: 'Teleport forward along the path' },
+  shield:    { name: 'Shield', kind: 'ability', key: 'R', icon: '🛡', desc: 'Absorb a chunk of damage' },
+  decoy:     { name: 'Decoy',  kind: 'ability', key: 'C', icon: '👥', desc: 'Towers shoot your double instead' },
+  surge:     { name: 'Surge',  kind: 'ability', key: 'V', icon: '🚀', desc: 'Huge speed boost for a few seconds' },
+  medkit:    { name: 'Medkit', kind: 'ability', key: 'X', icon: '➕', desc: 'Heal yourself instantly' },
+  nova:      { name: 'Healing Nova', kind: 'ability', key: 'Z', icon: '💠', desc: 'Heal yourself and every runner within two blocks' },
 };
 const ABILITY_KEYS = Object.keys(UPGRADES).filter(k => UPGRADES[k].kind === 'ability');
+const PASSIVE_KEYS = Object.keys(UPGRADES).filter(k => UPGRADES[k].kind === 'passive');
 
-const DEFS = { CELL, T, RUNNER_R, TOWERS, TRAPS, BUILD, TRACKS, MM_ABILITIES, UPGRADES, SETTINGS, ABILITY_KEYS };
+/* What the Mastermind can unlock, in the order the UI lists it, and the few
+   things they start the game already holding. */
+const UNLOCKABLE = Object.keys(BUILD).concat(Object.keys(MM_ABILITIES));
+const UNLOCK_START = ['turret', 'spikes', 'glue', 'meteor'];
+
+const DEFS = { CELL, T, RUNNER_R, TOWERS, TRAPS, BUILD, TRACKS, MM_ABILITIES, MM_UPGRADES,
+               UPGRADES, SETTINGS, ABILITY_KEYS, PASSIVE_KEYS, UNLOCKABLE, UNLOCK_START,
+               FLICKER_MS, SPAWN_GRACE };
 
 /* ------------------------------------------------------------------ scaling */
 /* The formulas themselves live in public/rules.js so the browser shows exactly
    the numbers the server is about to charge. These are just room-shaped wrappers. */
 const upgradeCost = (room, key, lv) => RULES.upgradeCost(room.set, UPGRADES[key], lv);
 const buildCost   = (room, type)    => RULES.buildCost(room.set, BUILD[type]);
-const trackCost   = (room, tw)      => RULES.trackCost(room.set, BUILD[tw.type], RULES.upgrades(tw.up));
-const twDmg   = (room, tw) => RULES.dmg(BUILD[tw.type], tw.up, room.set);
+const trackCost   = (room, tw, track) => {
+  const def = BUILD[tw.type];
+  return RULES.trackCost(room.set, def, RULES.upgrades(tw.up), tw.up[track] || 0, def.tracks.length);
+};
+/* The cheapest upgrade this building currently sells, which is what a mass
+   upgrade is sorted by. */
+const bestTrackCost = (room, tw) => {
+  let best = Infinity;
+  for (const tr of BUILD[tw.type].tracks) best = Math.min(best, trackCost(room, tw, tr));
+  return best === Infinity ? 0 : best;
+};
+const siegeMul = room => 1 + 0.08 * (room.mmUp.siege || 0);
+const twDmg   = (room, tw) => RULES.dmg(BUILD[tw.type], tw.up, room.set) * siegeMul(room);
 const twRange = tw => RULES.range(BUILD[tw.type], tw.up);
 const twRate  = tw => RULES.rate(BUILD[tw.type], tw.up);
 const twSlow  = tw => RULES.slow(BUILD[tw.type], tw.up);
@@ -189,12 +253,18 @@ const twProj  = tw => RULES.proj(BUILD[tw.type], tw.up);
 
 const rSpeed   = (room, p) => RULES.speed(room.set, p.up, p.laps);
 const rMaxHp   = (room, p) => RULES.maxHp(room.set, p.up, p.laps);
-const rArmor   = p => RULES.armorMul(p.up);
 const rGrip    = p => RULES.gripMul(p.up);
 const rHaste   = p => RULES.hasteMul(p.up);
 const rRespawn = (room, p) => RULES.respawnMs(room.set, p.up);
 const rMomentum = (p, now) => RULES.momentumMul(p.up, now - p.lastHurt);
 const ABILITY = RULES.ability;
+
+/* The ultimate, if it is running and it is the one that touches this stat. */
+function ultOn(p, stat, now) {
+  if (!p.ult || !p.up.ultimate || p.ultUntil <= now) return 0;
+  const u = RULES.ULTS[p.ult];
+  return u && u.stat === stat ? RULES.ultMul(p.ult, p.up.ultimate) : 0;
+}
 
 /* --------------------------------------------------------------------- rooms */
 const rooms = new Map();
@@ -213,28 +283,56 @@ function makeRoom(code) {
     projectiles: [], meteors: [], decoys: [], events: [],
     gold: 0, vpRun: 0, vpMM: 0, winner: null, winUntil: 0,
     freezeUntil: 0, overdriveUntil: 0, blackoutUntil: 0,
-    mmCd: {}, roundStart: Date.now(), emptySince: Date.now(),
+    mmCd: {}, mmUp: {}, roundStart: Date.now(), emptySince: Date.now(),
+    /* the unlock economy: damage dealt buys points, points buy buildings */
+    dmgDone: 0, unlockPts: 0, unlockEarned: 0, unlocked: new Set(UNLOCK_START), unlockDirty: false,
+    tunnelCache: null,
     nextTid: 1, nextDid: 1, gridDirty: false, towersDirty: false,
   };
   room.tiles = new Array(room.set.gw * room.set.gh).fill(T.EMPTY);
   room.gold = room.set.startGold;
   for (const a in MM_ABILITIES) room.mmCd[a] = 0;
+  for (const u in MM_UPGRADES) room.mmUp[u] = 0;
   loadPreset(room, 'snake');
   rooms.set(code, room);
   return room;
 }
 
-const GW = r => r.set.gw, GH = r => r.set.gh;
 function idx(room, x, y) { return y * room.set.gw + x; }
 function inBounds(room, x, y) { return x >= 0 && y >= 0 && x < room.set.gw && y < room.set.gh; }
 function tileAt(room, x, y) { return inBounds(room, x, y) ? room.tiles[idx(room, x, y)] : -1; }
-function walkable(t) { return t === T.PATH || t === T.START || t === T.END; }
+function walkable(t) { return t === T.PATH || t === T.START || t === T.END || t === T.STEEP || t === T.TUNNEL; }
+/* Traps go on ground a runner walks along, which now includes the steep bits. */
+function pathLike(t) { return t === T.PATH || t === T.STEEP; }
 function findTile(room, type) {
   const i = room.tiles.indexOf(type);
   return i < 0 ? null : { x: i % room.set.gw, y: Math.floor(i / room.set.gw) };
 }
+function findTiles(room, type) {
+  const out = [];
+  for (let i = 0; i < room.tiles.length; i++) {
+    if (room.tiles[i] === type) out.push({ x: i % room.set.gw, y: Math.floor(i / room.set.gw), i });
+  }
+  return out;
+}
 function boardW(room) { return room.set.gw * CELL; }
 function boardH(room) { return room.set.gh * CELL; }
+function gridChanged(room) { room.gridDirty = true; room.tunnelCache = null; }
+
+/* Tunnels pair up in reading order: the first mouth links to the second, the
+   third to the fourth, and so on. An odd one out simply does nothing, and the
+   client draws the pair number on each mouth so this is never a guess. */
+function tunnels(room) {
+  if (!room.tunnelCache) room.tunnelCache = findTiles(room, T.TUNNEL);
+  return room.tunnelCache;
+}
+function tunnelPartner(room, x, y) {
+  const list = tunnels(room);
+  const k = list.findIndex(t => t.x === x && t.y === y);
+  if (k < 0) return null;
+  const j = k ^ 1;
+  return j < list.length ? list[j] : null;
+}
 
 /* Presets are drawn as a fraction of the board so they fit any map size. */
 const PRESETS = {
@@ -299,7 +397,7 @@ function loadPreset(room, name) {
     room.tiles[idx(room, last[0], last[1])] = T.END;
   }
   pruneTowers(room);
-  room.gridDirty = true;
+  gridChanged(room);
   for (const p of runners(room)) placeAtStart(room, p, Date.now());
   return true;
 }
@@ -309,7 +407,7 @@ function pruneTowers(room) {
   for (const [key, tw] of [...room.towers]) {
     const def = BUILD[tw.type];
     const t = tileAt(room, tw.gx, tw.gy);
-    const ok = def.onPath ? t === T.PATH : t === T.EMPTY;
+    const ok = def.onPath ? pathLike(t) : t === T.EMPTY;
     if (!ok) { room.gold += tw.spent; room.towers.delete(key); room.towersDirty = true; }
   }
 }
@@ -325,38 +423,49 @@ function resize(room, gw, gh) {
     if (!inBounds(room, tw.gx, tw.gy)) { room.gold += tw.spent; room.towers.delete(key); room.towersDirty = true; }
   }
   pruneTowers(room);
-  room.gridDirty = true;
+  gridChanged(room);
   for (const p of runners(room)) placeAtStart(room, p, Date.now());
 }
 
+/* Every START must be able to reach some END, or somebody spawns walled in.
+   Tunnels count as connections, which is the entire point of tunnels. */
 function pathConnected(room) {
-  const s = findTile(room, T.START), e = findTile(room, T.END);
-  if (!s || !e) return false;
-  const w = room.set.gw, seen = new Uint8Array(w * room.set.gh);
-  const q = [s]; seen[idx(room, s.x, s.y)] = 1;
-  while (q.length) {
-    const c = q.shift();
-    if (c.x === e.x && c.y === e.y) return true;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = c.x + dx, ny = c.y + dy;
-      if (!inBounds(room, nx, ny)) continue;
-      const i = idx(room, nx, ny);
-      if (seen[i] || !walkable(room.tiles[i])) continue;
-      seen[i] = 1; q.push({ x: nx, y: ny });
+  const starts = findTiles(room, T.START), ends = findTiles(room, T.END);
+  if (!starts.length || !ends.length) return false;
+  for (const s of starts) {
+    const w = room.set.gw, seen = new Uint8Array(w * room.set.gh);
+    const q = [s]; seen[idx(room, s.x, s.y)] = 1;
+    let found = false;
+    while (q.length && !found) {
+      const c = q.shift();
+      if (room.tiles[idx(room, c.x, c.y)] === T.END) { found = true; break; }
+      const hops = [[c.x + 1, c.y], [c.x - 1, c.y], [c.x, c.y + 1], [c.x, c.y - 1]];
+      const par = room.tiles[idx(room, c.x, c.y)] === T.TUNNEL ? tunnelPartner(room, c.x, c.y) : null;
+      if (par) hops.push([par.x, par.y]);
+      for (const [nx, ny] of hops) {
+        if (!inBounds(room, nx, ny)) continue;
+        const i = idx(room, nx, ny);
+        if (seen[i] || !walkable(room.tiles[i])) continue;
+        seen[i] = 1; q.push({ x: nx, y: ny });
+      }
     }
+    if (!found) return false;
   }
-  return false;
+  return true;
 }
 
 /* ------------------------------------------------------------------- players */
 function runners(room) { return [...room.players.values()].filter(p => p.role === 'runner'); }
 
 function placeAtStart(room, p, now) {
-  const s = findTile(room, T.START);
+  const list = findTiles(room, T.START);
+  const s = list.length ? list[(Math.random() * list.length) | 0] : null;
   p.x = s ? (s.x + 0.5) * CELL : CELL / 2;
   p.y = s ? (s.y + 0.5) * CELL : CELL / 2;
-  p.dashUntil = 0; p.surgeUntil = 0; p.rootUntil = 0;
-  p.ghostUntil = Math.max(p.ghostUntil || 0, (now || Date.now()) + SPAWN_GRACE);
+  p.dashUntil = 0; p.surgeUntil = 0; p.rootUntil = 0; p.endAt = 0; p.tunnelUntil = 0;
+  /* Real, brief invulnerability on spawn -- separate from Ghost, which only
+     hides you. Being shot the instant you appear is not a game. */
+  p.invUntil = Math.max(p.invUntil || 0, (now || Date.now()) + SPAWN_GRACE);
 }
 
 function fits(room, x, y) {
@@ -382,32 +491,112 @@ function tryMove(room, p, dx, dy) {
 
 function ev(room, e) { if (room.events.length < MAX_EVENTS) room.events.push(e); }
 
-function damage(room, p, amt, now, src) {
-  if (p.dead || p.ghostUntil > now || amt <= 0) return;
-  amt *= rArmor(p);
+/* Ghost hides you from towers. It does not make you invulnerable, it breaks
+   for a moment whenever a trap bites, and it is worth nothing on the END --
+   which is exactly where an invisible runner used to be unanswerable. */
+function hidden(p, now) {
+  return p.ghostUntil > now && p.flickerUntil <= now && !p.onEnd;
+}
+
+/* --------------------------------------------------------------- unlocking */
+function addUnlockDamage(room, amt) {
+  if (!(amt > 0)) return;
+  room.dmgDone += amt;
+  let need = RULES.unlockNeed(room.set, room.unlockEarned);
+  let gained = 0;
+  while (room.dmgDone >= need && room.unlockEarned < UNLOCKABLE.length + 4) {
+    room.dmgDone -= need;
+    room.unlockEarned++; room.unlockPts++; gained++;
+    need = RULES.unlockNeed(room.set, room.unlockEarned);
+  }
+  if (gained) {
+    ev(room, { k: 'unlockpt', n: gained });
+    if (room.mm) note(room.mm, 'Unlock point earned. Spend it on anything in the armoury.', 'good');
+  }
+}
+
+/* ------------------------------------------------------------- healing */
+function healAmount(p, amt, now) {
+  const m = ultOn(p, 'heal', now);
+  return m ? amt * m : amt;
+}
+function healRunner(room, p, amt, now, quiet) {
+  if (p.dead || !(amt > 0)) return 0;
+  const before = p.hp;
+  p.hp = Math.min(p.maxHp, p.hp + healAmount(p, amt, now));
+  const done = p.hp - before;
+  if (done > 0.5 && !quiet) ev(room, { k: 'heal', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(done), id: p.id });
+  return done;
+}
+
+/* ---------------------------------------------------------------- damage */
+/* src is what did it (for the sound), el is what kind of damage it was (for
+   the resists), and opts.shot marks a thing that can be dodged or batted away. */
+function damage(room, p, amt, now, src, el, opts) {
+  if (p.dead || p.invUntil > now || !(amt > 0)) return 0;
+  opts = opts || {};
+
+  amt *= RULES.armorMul(p.up, el);
+  if (opts.trap) amt *= RULES.trapMul(p.up);
+  if (p.onEnd) amt *= 1 - (room.set.endResist || 0) / 100;
   if (p.up.tough && p.hp / p.maxHp < 0.3) amt *= RULES.toughMul(p.up);
+  const iron = ultOn(p, 'armor', now);
+  if (iron) amt /= iron;
+
+  /* The ability shield is temporary, so it is spent first; the barrier is
+     permanent and grows back, so it is what is left holding the line. */
+  /* Everything that got through the resists counts as damage dealt, whether a
+     bar ate it or not: a runner who hides behind a barrier all game must not
+     starve the Mastermind's unlock bar. */
+  const dealt = amt;
   if (p.shield > 0) {
     const eaten = Math.min(p.shield, amt);
     p.shield -= eaten; amt -= eaten;
     ev(room, { k: 'absorb', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(eaten) });
     if (p.shield <= 0) ev(room, { k: 'shieldpop', x: Math.round(p.x), y: Math.round(p.y) });
-    if (amt <= 0.01) { p.lastHurt = now; return; }
   }
-  p.hp -= amt;
+  if (amt > 0.01 && p.barrier > 0) {
+    const eaten = Math.min(p.barrier, amt);
+    p.barrier -= eaten; amt -= eaten;
+    ev(room, { k: 'barrierhit', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(eaten), id: p.id });
+    if (p.barrier <= 0.01) {
+      p.barrier = 0;
+      ev(room, { k: 'barrierbreak', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+    }
+  }
   p.lastHurt = now;
-  if (src !== 'flame' && src !== 'saw' && src !== 'laser') {
+  if (amt <= 0.01) return dealt;
+
+  p.hp -= amt;
+  if (src !== 'flame' && src !== 'saw' && src !== 'laser' && src !== 'brazier') {
     ev(room, { k: 'hit', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(amt), id: p.id, s: src });
   } else if (Math.random() < 0.25) {
     ev(room, { k: 'burn', x: Math.round(p.x), y: Math.round(p.y), id: p.id, s: src });
   }
   if (p.hp <= 0) kill(room, p, now);
+  return dealt;
+}
+
+/* Dodge and Deflection. Both only answer bullets: a laser beam has nothing to
+   step out of the way of, which is why the Laser says so on the tin. */
+function evade(room, p, now, el) {
+  if (!p || p.dead || el !== 'bullet') return null;
+  if (Math.random() < RULES.deflectChance(p.up)) {
+    ev(room, { k: 'deflect', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+    return 'deflect';
+  }
+  if (Math.random() < RULES.dodgeChance(p.up)) {
+    ev(room, { k: 'dodge', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+    return 'dodge';
+  }
+  return null;
 }
 
 function kill(room, p, now) {
-  p.hp = 0; p.dead = true; p.shield = 0;
+  p.hp = 0; p.dead = true; p.shield = 0; p.barrier = 0; p.endAt = 0; p.ultUntil = 0;
   p.respawnAt = now + rRespawn(room, p);
   p.deaths++; p.points += room.set.ptsDeath;
-  room.gold += room.set.goldKill;
+  room.gold += room.set.goldKill * (1 + 0.25 * (room.mmUp.bounty || 0));
   room.vpMM += room.set.vpKill;
   ev(room, { k: 'die', x: Math.round(p.x), y: Math.round(p.y), n: p.name, id: p.id });
   ev(room, { k: 'vp', x: Math.round(p.x), y: Math.round(p.y), n: room.set.vpKill, team: 'mm' });
@@ -421,7 +610,9 @@ function finish(room, p, now) {
   room.gold += room.set.goldFinish;
   p.maxHp = rMaxHp(room, p);
   p.hp = p.maxHp;
+  p.barrier = RULES.barrierMax(room.set, p.up);
   p.shield = Math.max(p.shield, 25);
+  p.endAt = 0;
   ev(room, { k: 'fin', x: Math.round(p.x), y: Math.round(p.y), n: p.name, id: p.id });
   ev(room, { k: 'vp', x: Math.round(p.x), y: Math.round(p.y), n: room.set.vpFinish, team: 'run' });
   ev(room, { k: 'lap', x: Math.round(p.x), y: Math.round(p.y), n: p.laps });
@@ -445,14 +636,16 @@ function newRound(room, now) {
   room.winner = null; room.vpRun = 0; room.vpMM = 0;
   room.edit = true;
   /* A fresh round starts from the configured bankroll, not from whatever was
-     left over when the last one ended. */
+     left over when the last one ended. The armoury, though, stays open: it was
+     paid for in blood. */
   room.gold = room.set.startGold;
   room.towersDirty = true;
   room.projectiles = []; room.meteors = []; room.decoys = [];
   room.freezeUntil = 0; room.overdriveUntil = 0; room.blackoutUntil = 0;
   room.roundStart = now;
   for (const p of runners(room)) {
-    p.dead = false; p.hp = p.maxHp; p.shield = 0;
+    p.dead = false; p.hp = p.maxHp; p.shield = 0; p.ultUntil = 0; p.ultCd = 0;
+    p.barrier = RULES.barrierMax(room.set, p.up);
     placeAtStart(room, p, now);
   }
   shout(room, 'New round. The Mastermind is setting up.', 'info');
@@ -462,7 +655,7 @@ function newRound(room, now) {
 function targetsOf(room, now) {
   const list = [];
   for (const p of room.players.values()) {
-    if (p.role !== 'runner' || p.dead || p.ghostUntil > now) continue;
+    if (p.role !== 'runner' || p.dead || hidden(p, now) || p.invUntil > now) continue;
     list.push({ x: p.x, y: p.y, p, decoy: null });
   }
   for (const d of room.decoys) list.push({ x: d.x, y: d.y, p: null, decoy: d });
@@ -493,9 +686,11 @@ function leadPoint(sx, sy, t, speed) {
   return { x: t.x + vx * time, y: t.y + vy * time };
 }
 
-function hurtTarget(room, tgt, amt, now, src) {
-  if (tgt.p) damage(room, tgt.p, amt, now, src);
-  else if (tgt.decoy) {
+function hurtTarget(room, tgt, amt, now, src, el, opts) {
+  if (tgt.p) {
+    const done = damage(room, tgt.p, amt, now, src, el, opts);
+    addUnlockDamage(room, done);
+  } else if (tgt.decoy) {
     tgt.decoy.hp -= amt;
     ev(room, { k: 'hit', x: Math.round(tgt.x), y: Math.round(tgt.y), a: Math.round(amt), id: -1, s: src });
   }
@@ -527,7 +722,7 @@ function tick(room, now) {
   }
 
   /* slow auras are recomputed every tick from scratch */
-  for (const p of rs) { p.slow = 1; p.inFrost = false; }
+  for (const p of rs) { p.slow = 1; p.terrain = 1; p.inFrost = false; }
   if (live) {
     for (const tw of room.towers.values()) {
       if (tw.type !== 'frost' || tw.disabledUntil > now) continue;
@@ -545,34 +740,60 @@ function tick(room, now) {
   /* ------------------------------------------------------------- runners */
   for (const p of rs) {
     p.maxHp = rMaxHp(room, p);
+    p.barrierMax = RULES.barrierMax(S, p.up);
+    const aegis = ultOn(p, 'barrier', now);
+    if (aegis) p.barrierMax *= aegis;
     if (p.hp > p.maxHp) p.hp = p.maxHp;
+    if (p.barrier > p.barrierMax) p.barrier = p.barrierMax;
     if (p.dead) {
+      p.onEnd = false;
       if (now >= p.respawnAt) {
-        p.dead = false; p.hp = p.maxHp;
+        p.dead = false; p.hp = p.maxHp; p.barrier = p.barrierMax;
         placeAtStart(room, p, now);
         ev(room, { k: 'spawn', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       }
       continue;
     }
-    if (!live) continue;
+    if (!live) { p.onEnd = false; p.endAt = 0; continue; }
 
     /* whatever is under the feet */
     const gx = Math.floor(p.x / CELL), gy = Math.floor(p.y / CELL);
+    const ground = tileAt(room, gx, gy);
+    p.onEnd = ground === T.END;
+    if (ground === T.STEEP) {
+      /* Grip helps on a climb, but only half as much as it helps against glue:
+         the hill is not a status effect, it is a hill. */
+      p.terrain = 1 - (S.steepSlow / 100) * (0.5 + 0.5 * rGrip(p));
+    }
+    if (ground === T.TUNNEL && now >= p.tunnelUntil) {
+      const par = tunnelPartner(room, gx, gy);
+      if (par) {
+        ev(room, { k: 'tunnelin', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+        p.x = (par.x + 0.5) * CELL; p.y = (par.y + 0.5) * CELL;
+        p.tunnelUntil = now + TUNNEL_CD;
+        p.endAt = 0;
+        ev(room, { k: 'tunnelout', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+      }
+    }
     const under = room.towers.get(gx + ',' + gy);
     if (under && under.disabledUntil <= now && BUILD[under.type].onPath) stepOnTrap(room, under, p, now, dt);
 
     /* movement */
-    const frozen = room.freezeUntil > now || p.rootUntil > now;
+    const unstop = ultOn(p, 'grip', now);
+    const frozen = (room.freezeUntil > now || p.rootUntil > now) && !unstop;
     const wasX = p.x, wasY = p.y;
     if (!frozen) {
       let ix = p.input.dx, iy = p.input.dy;
       const len = Math.hypot(ix, iy);
       if (len > 1) { ix /= len; iy /= len; }
       if (len > 0.01) { p.faceX = ix / len; p.faceY = iy / len; }
-      const slowMul = 1 - (1 - p.slow) * rGrip(p);
+      const slowMul = unstop ? 1 : (1 - (1 - p.slow) * rGrip(p)) * p.terrain;
       let spd = rSpeed(room, p) * slowMul * rMomentum(p, now);
       if (p.surgeUntil > now) spd *= p.surgeMul;
-      if (p.dashUntil > now) { spd = 760; ix = p.faceX; iy = p.faceY; }
+      const flash = ultOn(p, 'speed', now);
+      if (flash) spd *= flash;
+      if (unstop) spd *= Math.min(2.2, unstop);
+      if (p.dashUntil > now) { spd = Math.max(spd, 760); ix = p.faceX; iy = p.faceY; }
       if (ix || iy) tryMove(room, p, ix * spd * dt, iy * spd * dt);
     }
     /* Measured, not requested: this is what towers aim ahead of. Hold one
@@ -580,11 +801,33 @@ function tick(room, now) {
     p.vx = (p.x - wasX) / dt; p.vy = (p.y - wasY) / dt;
 
     /* Regeneration does not care whether you are being shot at: it races the
-       incoming damage instead of waiting politely for it to stop. */
-    if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + RULES.regenPerSec(p.up) * dt);
+       incoming damage instead of waiting politely for it to stop. Field Medic
+       and the barrier do wait, which is what makes them different. */
+    const calm = now - p.lastHurt;
+    if (p.hp < p.maxHp) {
+      let hps = RULES.regenPerSec(p.up);
+      if (calm > RULES.OOC_MS) hps += RULES.oocPerSec(p.up);
+      if (hps > 0) healRunner(room, p, hps * dt, now, true);
+    }
+    if (p.barrier < p.barrierMax && calm > RULES.BARRIER_MS) {
+      const was = p.barrier;
+      p.barrier = Math.min(p.barrierMax, p.barrier + RULES.barrierRegen(p.up) * dt);
+      if (was <= 0.01 && p.barrier > 0.01) ev(room, { k: 'barrierup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+    }
     if (p.shieldUntil && now > p.shieldUntil && p.shield > 0) { p.shield = 0; }
 
-    if (tileAt(room, Math.floor(p.x / CELL), Math.floor(p.y / CELL)) === T.END) finish(room, p, now);
+    /* The END is a hold, not a touch. Step off and the clock goes back to zero. */
+    if (p.onEnd) {
+      p.endNeed = RULES.escapeMs(S, p.laps, room.mmUp.lockdown || 0);
+      if (!p.endAt) {
+        p.endAt = now;
+        ev(room, { k: 'escapestart', x: Math.round(p.x), y: Math.round(p.y), id: p.id, d: p.endNeed });
+      }
+      if (now - p.endAt >= p.endNeed) finish(room, p, now);
+    } else if (p.endAt) {
+      ev(room, { k: 'escapelost', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+      p.endAt = 0;
+    }
     if (room.winner) return;
   }
 
@@ -601,7 +844,7 @@ function tick(room, now) {
       if (def.kind === 'aura') {
         let any = false;
         for (const t of tgts) {
-          if (Math.hypot(t.x - tw.x, t.y - tw.y) <= range) { hurtTarget(room, t, twDmg(room, tw) * dt * odMul, now, 'flame'); any = true; }
+          if (Math.hypot(t.x - tw.x, t.y - tw.y) <= range) { hurtTarget(room, t, twDmg(room, tw) * dt * odMul, now, 'flame', def.el); any = true; }
         }
         tw.firing = any;
         continue;
@@ -616,7 +859,7 @@ function tick(room, now) {
         if (!best) { tw.firing = false; tw.beam = 0; tw.bx = 0; tw.by = 0; continue; }
         tw.beam = Math.min(def.rampTime, (tw.beam || 0) + dt);
         const ramp = 1 + (def.rampMax - 1) * (tw.beam / def.rampTime);
-        hurtTarget(room, best, twDmg(room, tw) * ramp * dt * odMul, now, 'laser');
+        hurtTarget(room, best, twDmg(room, tw) * ramp * dt * odMul, now, 'laser', def.el);
         tw.firing = true; tw.bx = Math.round(best.x); tw.by = Math.round(best.y);
         tw.aim = Math.atan2(best.y - tw.y, best.x - tw.x);
         continue;
@@ -630,7 +873,7 @@ function tick(room, now) {
         if (!inRange.length) continue;
         tw.nextShot = now + 1000 / rate;
         ev(room, { k: 'pulse', x: Math.round(tw.x), y: Math.round(tw.y), r: Math.round(range), c: def.color });
-        for (const t of inRange) hurtTarget(room, t, twDmg(room, tw), now, 'pulse');
+        for (const t of inRange) hurtTarget(room, t, twDmg(room, tw), now, 'pulse', def.el);
         continue;
       }
 
@@ -650,11 +893,12 @@ function tick(room, now) {
         const aim = leadPoint(tw.x, tw.y, best, speed);
         const d = Math.hypot(aim.x - tw.x, aim.y - tw.y) || 1;
         room.projectiles.push({ x: tw.x, y: tw.y, vx: (aim.x - tw.x) / d * speed, vy: (aim.y - tw.y) / d * speed,
-          dmg, c: def.color, kind: 'bolt', left: range * 1.8 });
+          dmg, c: def.color, kind: 'bolt', el: def.el, left: range * 1.8 });
         tw.aim = Math.atan2(aim.y - tw.y, aim.x - tw.x);
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'turret', a: Math.round(tw.aim * 100) / 100 });
       } else if (def.kind === 'hitscan') {
-        hurtTarget(room, best, dmg, now, 'sniper');
+        const dodged = best.p ? evade(room, best.p, now, def.el) : null;
+        if (!dodged) hurtTarget(room, best, dmg, now, 'sniper', def.el, { shot: 1 });
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'sniper', a: Math.round(tw.aim * 100) / 100 });
         ev(room, { k: 'shot', x1: Math.round(tw.x), y1: Math.round(tw.y), x2: Math.round(best.x), y2: Math.round(best.y), c: def.color, w: 3 });
       } else if (def.kind === 'lob') {
@@ -662,12 +906,12 @@ function tick(room, now) {
         const aim = leadPoint(tw.x, tw.y, best, speed);
         const dist = Math.hypot(aim.x - tw.x, aim.y - tw.y);
         room.projectiles.push({ x: tw.x, y: tw.y, tx: aim.x, ty: aim.y, sx: tw.x, sy: tw.y, t: 0,
-          dur: Math.max(0.15, dist / speed), dmg, splash: twSplash(tw), c: def.color, kind: 'lob' });
+          dur: Math.max(0.15, dist / speed), dmg, splash: twSplash(tw), c: def.color, kind: 'lob', el: def.el });
         tw.aim = Math.atan2(aim.y - tw.y, aim.x - tw.x);
         ev(room, { k: 'fire', x: Math.round(tw.x), y: Math.round(tw.y), ty: 'mortar', a: Math.round(tw.aim * 100) / 100 });
       } else if (def.kind === 'chain') {
         const hit = [best]; let last = best, d = dmg;
-        hurtTarget(room, best, d, now, 'tesla');
+        hurtTarget(room, best, d, now, 'tesla', def.el);
         ev(room, { k: 'shot', x1: Math.round(tw.x), y1: Math.round(tw.y), x2: Math.round(best.x), y2: Math.round(best.y), c: def.color, w: 2, z: 1 });
         for (let i = 1; i < def.chain; i++) {
           let nxt = null, nd = Infinity;
@@ -678,7 +922,7 @@ function tick(room, now) {
           }
           if (!nxt) break;
           d *= 0.7;
-          hurtTarget(room, nxt, d, now, 'tesla');
+          hurtTarget(room, nxt, d, now, 'tesla', def.el);
           ev(room, { k: 'shot', x1: Math.round(last.x), y1: Math.round(last.y), x2: Math.round(nxt.x), y2: Math.round(nxt.y), c: def.color, w: 2, z: 1 });
           hit.push(nxt); last = nxt;
         }
@@ -690,7 +934,8 @@ function tick(room, now) {
   /* --------------------------------------------------------- projectiles */
   /* Bolts fly in a straight line and hit only what they actually run into, so
      stepping out of the way works. Substepped so a fast one cannot skip past a
-     runner between ticks. */
+     runner between ticks. Dodge lets one pass clean through; Deflection sends
+     it back the way it came. */
   const flying = live ? targetsOf(room, now) : [];
   for (let i = room.projectiles.length - 1; i >= 0; i--) {
     const pr = room.projectiles[i];
@@ -705,11 +950,18 @@ function tick(room, now) {
         pr.y += pr.vy * dt / sub;
         pr.left -= dist / sub;
         for (const t of flying) {
-          if (t.p && (t.p.dead || t.p.ghostUntil > now)) continue;
+          if (t.p && (t.p.dead || hidden(t.p, now))) continue;
           if (t.decoy && t.decoy.hp <= 0) continue;
+          if (pr.spent && pr.spent === (t.p ? t.p.id : -1)) continue;
           const tx = t.p ? t.p.x : t.decoy.x, ty = t.p ? t.p.y : t.decoy.y;
           if (Math.hypot(tx - pr.x, ty - pr.y) <= RUNNER_R + 4) {
-            hurtTarget(room, t, pr.dmg, now, 'turret');
+            const dodged = t.p ? evade(room, t.p, now, pr.el) : null;
+            if (dodged === 'deflect') {
+              pr.vx = -pr.vx; pr.vy = -pr.vy; pr.dmg = 0; pr.spent = t.p.id; pr.c = '#e2e8f0';
+              break;
+            }
+            if (dodged === 'dodge') { pr.spent = t.p.id; break; }
+            hurtTarget(room, t, pr.dmg, now, 'turret', pr.el, { shot: 1 });
             ev(room, { k: 'spark', x: Math.round(pr.x), y: Math.round(pr.y), c: pr.c });
             hit = true;
             break;
@@ -728,7 +980,7 @@ function tick(room, now) {
       pr.x = pr.sx + (pr.tx - pr.sx) * f;
       pr.y = pr.sy + (pr.ty - pr.sy) * f;
       pr.h = Math.sin(f * Math.PI) * 46;
-      if (f >= 1) { explode(room, pr.tx, pr.ty, pr.splash, pr.dmg, now, pr.c); room.projectiles.splice(i, 1); }
+      if (f >= 1) { explode(room, pr.tx, pr.ty, pr.splash, pr.dmg, now, pr.c, pr.el); room.projectiles.splice(i, 1); }
     }
     if (room.winner) return;
   }
@@ -736,7 +988,7 @@ function tick(room, now) {
   for (let i = room.meteors.length - 1; i >= 0; i--) {
     const m = room.meteors[i];
     if (now >= m.at) {
-      explode(room, m.x, m.y, m.r, m.dmg, now, '#f97316');
+      explode(room, m.x, m.y, m.r, m.dmg, now, '#f97316', 'fire');
       room.meteors.splice(i, 1);
     }
   }
@@ -744,22 +996,39 @@ function tick(room, now) {
 
 function stepOnTrap(room, tw, p, now, dt) {
   const def = BUILD[tw.type];
+  /* Standing in a trap gives your position away even while Ghost is up. */
+  if (p.ghostUntil > now && def.kind !== 'glue') {
+    if (p.flickerUntil <= now) ev(room, { k: 'flicker', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+    p.flickerUntil = now + FLICKER_MS;
+  }
+  const trap = { trap: 1 };
   switch (def.kind) {
     case 'glue':
       p.slow = Math.min(p.slow, 1 - twSlow(tw));
       break;
     case 'saw':
-      damage(room, p, twDmg(room, tw) * dt, now, 'saw');
+      addUnlockDamage(room, damage(room, p, twDmg(room, tw) * dt, now, 'saw', def.el, trap));
+      tw.firing = true;
+      break;
+    case 'brazier':
+      addUnlockDamage(room, damage(room, p, twDmg(room, tw) * dt, now, 'brazier', def.el, trap));
       tw.firing = true;
       break;
     case 'spikes':
       if (now - (p.trapAt[tw.id] || 0) > twCd(tw) * 1000) {
         p.trapAt[tw.id] = now;
-        damage(room, p, twDmg(room, tw), now, 'spikes');
+        addUnlockDamage(room, damage(room, p, twDmg(room, tw), now, 'spikes', def.el, trap));
+      }
+      break;
+    case 'jolt':
+      if (tw.cdUntil <= now) {
+        tw.cdUntil = now + twCd(tw) * 1000;
+        ev(room, { k: 'jolt', x: Math.round(tw.x), y: Math.round(tw.y), x2: Math.round(p.x), y2: Math.round(p.y) });
+        addUnlockDamage(room, damage(room, p, twDmg(room, tw), now, 'jolt', def.el, trap));
       }
       break;
     case 'mine':
-      explode(room, tw.x, tw.y, twSplash(tw), twDmg(room, tw), now, '#f97316');
+      explode(room, tw.x, tw.y, twSplash(tw), twDmg(room, tw), now, '#f97316', def.el, 1);
       room.towers.delete(tw.gx + ',' + tw.gy);
       room.towersDirty = true;
       break;
@@ -781,12 +1050,14 @@ function stepOnTrap(room, tw, p, now, dt) {
   }
 }
 
-function explode(room, x, y, radius, dmg, now, color) {
+function explode(room, x, y, radius, dmg, now, color, el, isTrap) {
   ev(room, { k: 'boom', x: Math.round(x), y: Math.round(y), r: Math.round(radius), c: color });
   for (const p of runners(room)) {
     if (p.dead) continue;
     const d = Math.hypot(p.x - x, p.y - y);
-    if (d <= radius + RUNNER_R) damage(room, p, dmg * (d < radius * 0.5 ? 1 : 0.6), now, 'boom');
+    if (d <= radius + RUNNER_R) {
+      addUnlockDamage(room, damage(room, p, dmg * (d < radius * 0.5 ? 1 : 0.6), now, 'boom', el, isTrap ? { trap: 1 } : null));
+    }
   }
   for (const dc of room.decoys) {
     if (Math.hypot(dc.x - x, dc.y - y) <= radius + RUNNER_R) dc.hp -= dmg;
@@ -804,15 +1075,24 @@ function towersMsg(room) {
   return JSON.stringify({ t: 'tw', tw });
 }
 function setMsg(room) { return JSON.stringify({ t: 'set', set: room.set }); }
+function unlockMsg(room) {
+  return JSON.stringify({ t: 'ul', have: [...room.unlocked], pts: room.unlockPts, up: room.mmUp });
+}
 
 function stateMsg(room, now) {
   const r = runners(room).map(p => ({
     id: p.id, n: p.name, x: Math.round(p.x), y: Math.round(p.y),
     hp: Math.round(p.hp), mh: Math.round(p.maxHp), sh: Math.round(p.shield),
+    ba: Math.round(p.barrier), bm: Math.round(p.barrierMax),
     d: p.dead ? 1 : 0, pt: p.points, fin: p.finishes, dth: p.deaths, lap: p.laps, up: p.up,
     cd: abilityCds(p, now),
-    gh: p.ghostUntil > now ? 1 : 0, ds: p.dashUntil > now ? 1 : 0, su: p.surgeUntil > now ? 1 : 0,
-    rt: p.rootUntil > now ? 1 : 0, sl: p.slow < 1 ? 1 : 0, fr: p.inFrost ? 1 : 0,
+    sx: p.slots, ul: p.ult || '', uc: Math.max(0, p.ultCd - now), uu: Math.max(0, p.ultUntil - now),
+    gh: hidden(p, now) ? 1 : 0, fk: p.ghostUntil > now && p.flickerUntil > now ? 1 : 0,
+    iv: p.invUntil > now ? 1 : 0,
+    ds: p.dashUntil > now ? 1 : 0, su: p.surgeUntil > now ? 1 : 0,
+    rt: p.rootUntil > now ? 1 : 0, sl: p.slow < 1 ? 1 : 0, st: p.terrain < 1 ? 1 : 0, fr: p.inFrost ? 1 : 0,
+    esc: p.endAt ? Math.min(1, (now - p.endAt) / Math.max(1, p.endNeed)) : 0,
+    en: p.endAt ? Math.round(p.endNeed) : 0,
     fx: Math.round(p.faceX * 100) / 100, fy: Math.round(p.faceY * 100) / 100,
     rs: p.dead ? Math.max(0, p.respawnAt - now) : 0,
   }));
@@ -831,7 +1111,7 @@ function stateMsg(room, now) {
     if (cd) o.c = cd;
     if (tw.type === 'laser' && tw.firing) { o.bx = tw.bx; o.by = tw.by; o.bt = Math.round((tw.beam || 0) * 100) / 100; }
     twd.push(o);
-    if (tw.type === 'saw') tw.firing = false;
+    if (tw.type === 'saw' || tw.type === 'tar') tw.firing = false;
   }
   const msg = {
     t: 's', now, edit: room.edit ? 1 : 0, gold: Math.floor(room.gold),
@@ -839,6 +1119,9 @@ function stateMsg(room, now) {
     winIn: room.winner ? Math.max(0, room.winUntil - now) : 0,
     mm: room.mm ? { id: room.mm.id, n: room.mm.name } : null,
     mmCd: mmCds(room, now),
+    /* unlock bar: points in hand, progress toward the next one, and the bill */
+    up: room.unlockPts, upr: Math.round(room.dmgDone),
+    upn: RULES.unlockNeed(room.set, room.unlockEarned),
     frz: Math.max(0, room.freezeUntil - now),
     od: Math.max(0, room.overdriveUntil - now),
     bo: Math.max(0, room.blackoutUntil - now),
@@ -883,6 +1166,7 @@ setInterval(() => {
     try { tick(room, now); } catch (e) { console.error('tick error', code, e); }
     if (room.gridDirty) { room.gridDirty = false; broadcast(room, gridMsg(room)); }
     if (room.towersDirty) { room.towersDirty = false; broadcast(room, towersMsg(room)); }
+    if (room.unlockDirty) { room.unlockDirty = false; broadcast(room, unlockMsg(room)); }
     broadcast(room, stateMsg(room, now));
   }
 }, TICK_MS);
@@ -901,14 +1185,20 @@ function onJoin(ws, m) {
   const name = clean(m.name, 14) || ('Player' + nextPlayerId);
   const up = {};
   for (const k in UPGRADES) up[k] = 0;
+  up.ultimate = 0;
   const p = {
     id: nextPlayerId++, ws, name, room, role: 'runner',
     x: 0, y: 0, hp: 100, maxHp: 100, shield: 0, shieldUntil: 0,
+    barrier: 0, barrierMax: 0,
     dead: false, respawnAt: 0, points: 0, finishes: 0, deaths: 0, laps: 0,
     up, input: { dx: 0, dy: 0 }, faceX: 1, faceY: 0,
-    dashUntil: 0, ghostUntil: 0, surgeUntil: 0, surgeMul: 1, rootUntil: 0,
-    cd: {}, slow: 1, inFrost: false, lastHurt: 0, trapAt: {},
+    dashUntil: 0, ghostUntil: 0, flickerUntil: 0, invUntil: 0,
+    surgeUntil: 0, surgeMul: 1, rootUntil: 0, tunnelUntil: 0,
+    endAt: 0, endNeed: 0, onEnd: false,
+    extraSlots: 0, slots: 0, ult: '', ultCd: 0, ultUntil: 0,
+    cd: {}, slow: 1, terrain: 1, inFrost: false, lastHurt: 0, trapAt: {},
   };
+  p.slots = room.set.slotStart;
   ws.player = p;
   room.players.set(p.id, p);
   if (m.role === 'mm' && !room.mm) { p.role = 'mm'; room.mm = p; }
@@ -919,6 +1209,7 @@ function onJoin(ws, m) {
   send(p, setMsg(room));
   send(p, gridMsg(room));
   send(p, towersMsg(room));
+  send(p, unlockMsg(room));
   shout(room, name + ' joined as ' + (p.role === 'mm' ? 'the Mastermind' : 'a runner') + '.');
 }
 
@@ -928,7 +1219,7 @@ function canPlace(room, type, x, y) {
   if (!def || !inBounds(room, x, y)) return false;
   if (room.towers.has(x + ',' + y)) return false;
   const t = room.tiles[idx(room, x, y)];
-  return def.onPath ? t === T.PATH : t === T.EMPTY;
+  return def.onPath ? pathLike(t) : t === T.EMPTY;
 }
 function placeTower(room, type, x, y, cost, quiet) {
   const def = BUILD[type];
@@ -974,6 +1265,12 @@ function setRole(p, role) {
   send(p, JSON.stringify({ t: 'role', role: p.role }));
 }
 
+function ownedAbilities(p) {
+  let n = 0;
+  for (const k of ABILITY_KEYS) if (p.up[k] > 0) n++;
+  return n;
+}
+
 function useAbility(room, p, key, now) {
   const lv = p.up[key];
   const def = UPGRADES[key];
@@ -982,7 +1279,8 @@ function useAbility(room, p, key, now) {
   if (room.blackoutUntil > now) { note(p, 'Blackout! No abilities right now.', 'warn'); return; }
   if ((p.cd[key] || 0) > now) return;
   const a = ABILITY[key](lv);
-  const cd = a.cd * rHaste(p);
+  const clock = ultOn(p, 'haste', now);
+  const cd = a.cd * rHaste(p) / (clock || 1);
 
   switch (key) {
     case 'dash':
@@ -999,7 +1297,8 @@ function useAbility(room, p, key, now) {
       break;
     }
     case 'ghost':
-      p.ghostUntil = now + a.dur;
+      if (p.onEnd) { note(p, 'Ghost does nothing while you are standing on the END.', 'warn'); return; }
+      p.ghostUntil = now + a.dur; p.flickerUntil = 0;
       ev(room, { k: 'ghost', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       break;
     case 'blink': {
@@ -1028,14 +1327,37 @@ function useAbility(room, p, key, now) {
       p.surgeUntil = now + a.dur; p.surgeMul = a.mul;
       ev(room, { k: 'surge', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       break;
-    case 'medkit': {
-      const before = p.hp;
-      p.hp = Math.min(p.maxHp, p.hp + a.heal);
-      ev(room, { k: 'heal', x: Math.round(p.x), y: Math.round(p.y), a: Math.round(p.hp - before) });
+    case 'medkit':
+      healRunner(room, p, a.heal * RULES.healPow(p.up), now);
+      break;
+    case 'nova': {
+      /* Two blocks of healing, for you and anyone running with you. */
+      ev(room, { k: 'nova', x: Math.round(p.x), y: Math.round(p.y), r: Math.round(a.radius), id: p.id });
+      let n = 0;
+      for (const o of runners(room)) {
+        if (o.dead) continue;
+        if (Math.hypot(o.x - p.x, o.y - p.y) > a.radius + RUNNER_R) continue;
+        if (healRunner(room, o, a.heal * RULES.healPow(p.up), now) > 0) n++;
+      }
+      if (n > 1) note(p, 'Nova healed ' + n + ' runners.', 'good');
       break;
     }
   }
   p.cd[key] = now + cd;
+}
+
+function useUltimate(room, p, now) {
+  if (!p.up.ultimate) { note(p, 'Buy the ultimate slot first.', 'warn'); return; }
+  if (!p.ult || !RULES.ULTS[p.ult]) { note(p, 'Pick which SUPER BUFF goes in the slot first.', 'warn'); return; }
+  if (room.blackoutUntil > now) { note(p, 'Blackout! No abilities right now.', 'warn'); return; }
+  if (p.ultCd > now) return;
+  const u = RULES.ULTS[p.ult];
+  p.ultUntil = now + RULES.ULT_DUR;
+  p.ultCd = now + RULES.ultCd(p.up);
+  if (u.stat === 'barrier') p.barrier = RULES.barrierMax(room.set, p.up) * RULES.ultMul(p.ult, p.up.ultimate);
+  ev(room, { k: 'ult', x: Math.round(p.x), y: Math.round(p.y), id: p.id, u: p.ult,
+    n: u.name, c: u.color, d: RULES.ULT_DUR, m: Math.round(RULES.ultMul(p.ult, p.up.ultimate) * 10) / 10 });
+  shout(room, p.name + ' unleashed ' + u.name + '!', 'warn');
 }
 
 function onMessage(ws, raw) {
@@ -1064,18 +1386,72 @@ function onMessage(ws, raw) {
       useAbility(room, p, m.a, now);
       break;
 
+    case 'ult':
+      if (p.role !== 'runner' || p.dead || room.edit || room.winner) break;
+      useUltimate(room, p, now);
+      break;
+
+    /* Which SUPER BUFF lives in the one ultimate slot. Free to change while
+       the ultimate is not running, because a locked-in wrong pick is misery. */
+    case 'pickUlt': {
+      if (p.role !== 'runner') break;
+      if (!RULES.ULTS[m.u]) break;
+      if (p.ultUntil > now) { note(p, 'Not while it is running.', 'warn'); break; }
+      p.ult = m.u;
+      note(p, RULES.ULTS[m.u].name + ' is loaded into the ultimate slot.', 'good');
+      break;
+    }
+
     case 'upgrade': {
       if (p.role !== 'runner') break;
+      if (m.key === 'ultimate') {
+        const cost = RULES.ultCost(room.set, p.up.ultimate);
+        if (p.points < cost) { note(p, 'Need ' + cost + ' points for the ultimate.', 'warn'); break; }
+        p.points -= cost; p.up.ultimate++;
+        ev(room, { k: 'levelup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+        note(p, 'Ultimate is now level ' + p.up.ultimate + '.', 'good');
+        break;
+      }
       const def = UPGRADES[m.key];
       if (!def) break;
       const lv = p.up[m.key];
+      /* Abilities live in slots. You can always level one you already hold;
+         picking up a new one needs somewhere to put it. */
+      if (def.kind === 'ability' && lv === 0 && ownedAbilities(p) >= p.slots) {
+        note(p, 'No free ability slot. Buy a slot, or drop something.', 'warn');
+        break;
+      }
       const cost = upgradeCost(room, m.key, lv);
       if (p.points < cost) { note(p, 'Need ' + cost + ' points for ' + def.name + '.', 'warn'); break; }
       p.points -= cost; p.up[m.key] = lv + 1;
       p.maxHp = rMaxHp(room, p);
-      if (m.key === 'hp' && !p.dead) p.hp += 30 * (room.set.runnerHp / 100);
+      if (m.key === 'hp' && !p.dead) p.hp += 26 * (room.set.runnerHp / 100);
       ev(room, { k: 'levelup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
-      note(p, def.name + ' is now level ' + p.up[m.key] + '.', 'good');
+      note(p, def.name + ' is now level ' + p.up[m.key] +
+        (RULES.softCapped(m.key, def.kind, p.up[m.key]) ? ' (diminishing).' : '.'), 'good');
+      break;
+    }
+
+    /* Ability slots: buy one more place to keep an ability. */
+    case 'slot': {
+      if (p.role !== 'runner') break;
+      if (p.slots >= ABILITY_KEYS.length) { note(p, 'You already have a slot for everything.', 'info'); break; }
+      const cost = RULES.slotCost(room.set, p.slots);
+      if (p.points < cost) { note(p, 'Need ' + cost + ' points for another slot.', 'warn'); break; }
+      p.points -= cost; p.extraSlots++; p.slots++;
+      ev(room, { k: 'slot', x: Math.round(p.x), y: Math.round(p.y), id: p.id, n: p.slots });
+      note(p, 'Ability slots: ' + p.slots + '.', 'good');
+      break;
+    }
+
+    /* Drop an ability you regret, for most of your points back. */
+    case 'drop': {
+      if (p.role !== 'runner') break;
+      const def = UPGRADES[m.key];
+      if (!def || def.kind !== 'ability' || !p.up[m.key]) break;
+      const back = RULES.refundFor(room.set, def, p.up[m.key]);
+      p.up[m.key] = 0; p.cd[m.key] = 0; p.points += back;
+      note(p, 'Dropped ' + def.name + ' for ' + back + ' points back.', 'info');
       break;
     }
 
@@ -1094,6 +1470,9 @@ function onMessage(ws, raw) {
       else if (m.key === 'gh') resize(room, room.set.gw, v);
       else room.set[m.key] = v;
       if (m.key === 'startGold' && room.edit) room.gold = v;
+      if (m.key === 'slotStart') {
+        for (const r of runners(room)) r.slots = room.set.slotStart + r.extraSlots;
+      }
       broadcast(room, setMsg(room));
       break;
     }
@@ -1103,7 +1482,7 @@ function onMessage(ws, raw) {
       const wantEdit = !!m.edit;
       if (wantEdit === room.edit) break;
       if (!wantEdit && !pathConnected(room)) {
-        note(p, 'The track needs a START, an END, and a connected path between them.', 'warn');
+        note(p, 'Every START needs a walkable route to an END before you can go live.', 'warn');
         break;
       }
       room.edit = wantEdit;
@@ -1112,9 +1491,10 @@ function onMessage(ws, raw) {
       if (!wantEdit) room.roundStart = now;
       for (const r of runners(room)) {
         r.dead = false; r.hp = r.maxHp; r.shield = 0;
+        r.barrier = RULES.barrierMax(room.set, r.up);
         placeAtStart(room, r, now);
       }
-      room.gridDirty = true;
+      gridChanged(room);
       shout(room, wantEdit ? 'The Mastermind is rebuilding the track. Runners wait at the start.'
                            : 'The track is LIVE. Run!', wantEdit ? 'warn' : 'good');
       break;
@@ -1123,22 +1503,22 @@ function onMessage(ws, raw) {
     case 'paint': {
       if (!isMM || !room.edit) break;
       const x = m.x, y = m.y, tile = m.tile;
-      if (!isInt(x, 0, room.set.gw - 1) || !isInt(y, 0, room.set.gh - 1) || !isInt(tile, 0, 3)) break;
+      if (!isInt(x, 0, room.set.gw - 1) || !isInt(y, 0, room.set.gh - 1) || !isInt(tile, 0, TILE_MAX)) break;
       const i = idx(room, x, y);
       if (room.tiles[i] === tile) break;
-      if (tile === T.START || tile === T.END) {
-        const old = findTile(room, tile);
-        if (old) room.tiles[idx(room, old.x, old.y)] = T.PATH;
+      /* One START and one END unless the room has asked for several. */
+      if ((tile === T.START || tile === T.END) && !room.set.multiEnds) {
+        for (const o of findTiles(room, tile)) room.tiles[o.i] = T.PATH;
       }
       room.tiles[i] = tile;
       const tw = room.towers.get(x + ',' + y);
       if (tw) {
         const onPath = !!BUILD[tw.type].onPath;
-        if ((onPath && tile !== T.PATH) || (!onPath && tile !== T.EMPTY)) {
+        if ((onPath && !pathLike(tile)) || (!onPath && tile !== T.EMPTY)) {
           room.gold += tw.spent; room.towers.delete(x + ',' + y); room.towersDirty = true;
         }
       }
-      room.gridDirty = true;
+      gridChanged(room);
       for (const r of runners(room)) placeAtStart(room, r, now);
       break;
     }
@@ -1148,15 +1528,48 @@ function onMessage(ws, raw) {
       loadPreset(room, m.name);
       break;
 
+    /* Spend an unlock point. Everything in the armoury costs exactly one. */
+    case 'unlock': {
+      if (!isMM) break;
+      const key = m.key;
+      if (!UNLOCKABLE.includes(key)) break;
+      if (room.unlocked.has(key)) break;
+      if (room.unlockPts < 1) { note(p, 'No unlock points. Hurt somebody.', 'warn'); break; }
+      room.unlockPts--;
+      room.unlocked.add(key);
+      room.unlockDirty = true;
+      const def = BUILD[key] || MM_ABILITIES[key];
+      shout(room, 'The Mastermind unlocked the ' + def.name + '.', 'warn');
+      ev(room, { k: 'unlocked', n: def.name, c: def.color || '#fbbf24' });
+      break;
+    }
+
+    /* Mastermind gold upgrades: global, permanent, and the late-game teeth. */
+    case 'mmup': {
+      if (!isMM) break;
+      const def = MM_UPGRADES[m.key];
+      if (!def) break;
+      const lv = room.mmUp[m.key] || 0;
+      const cost = RULES.mmUpCost(room.set, def, lv);
+      if (room.gold < cost) { note(p, 'Need ' + cost + ' gold for ' + def.name + '.', 'warn'); break; }
+      room.gold -= cost;
+      room.mmUp[m.key] = lv + 1;
+      room.unlockDirty = true;
+      note(p, def.name + ' is now level ' + room.mmUp[m.key] + '.', 'good');
+      shout(room, 'Mastermind bought ' + def.name + ' ' + room.mmUp[m.key] + '.', 'warn');
+      break;
+    }
+
     case 'tower': {
       if (!isMM) break;
       const def = BUILD[m.type];
       const x = m.x, y = m.y;
       if (!def || !isInt(x, 0, room.set.gw - 1) || !isInt(y, 0, room.set.gh - 1)) break;
+      if (!room.unlocked.has(m.type)) { note(p, def.name + ' is still locked.', 'warn'); break; }
       const key = x + ',' + y;
       if (room.towers.has(key)) { note(p, 'There is already something there.', 'warn'); break; }
       const t = room.tiles[idx(room, x, y)];
-      if (def.onPath && t !== T.PATH) { note(p, def.name + ' is a trap: it goes on the path.', 'warn'); break; }
+      if (def.onPath && !pathLike(t)) { note(p, def.name + ' is a trap: it goes on the path.', 'warn'); break; }
       if (!def.onPath && t !== T.EMPTY) { note(p, def.name + ' goes on empty ground, not the path.', 'warn'); break; }
       const cost = buildCost(room, m.type);
       if (room.gold < cost) { note(p, 'Not enough gold (' + cost + ' needed).', 'warn'); break; }
@@ -1170,6 +1583,7 @@ function onMessage(ws, raw) {
       if (!isMM) break;
       const def = BUILD[m.type];
       if (!def || !isInt(m.x, 0, room.set.gw - 1) || !isInt(m.y, 0, room.set.gh - 1)) break;
+      if (!room.unlocked.has(m.type)) { note(p, def.name + ' is still locked.', 'warn'); break; }
       const cost = buildCost(room, m.type);
       if (room.gold < cost) { note(p, 'Not enough gold (' + cost + ' needed).', 'warn'); break; }
       const w = room.set.gw, h = room.set.gh;
@@ -1203,10 +1617,10 @@ function onMessage(ws, raw) {
       if (!def || !def.tracks.includes(m.track)) break;
       const area = cleanArea(m.area);
       const list = [...room.towers.values()].filter(tw => tw.type === m.type && inArea(area, tw));
-      list.sort((a, b) => trackCost(room, a) - trackCost(room, b));
+      list.sort((a, b) => trackCost(room, a, m.track) - trackCost(room, b, m.track));
       let n = 0, spent = 0;
       for (const tw of list) {
-        const c = trackCost(room, tw);
+        const c = trackCost(room, tw, m.track);
         if (room.gold < c) break;
         const was = twForm(tw);
         room.gold -= c; tw.spent += c; tw.up[m.track]++;
@@ -1233,7 +1647,7 @@ function onMessage(ws, raw) {
       const key = m.x + ',' + m.y;
       const tw = room.towers.get(key);
       if (!tw) break;
-      const refund = Math.round(tw.spent * 0.7);
+      const refund = RULES.sellValue(tw.spent);
       room.gold += refund; room.towers.delete(key); room.towersDirty = true;
       ev(room, { k: 'sell', x: tw.x, y: tw.y });
       note(p, 'Sold for ' + refund + ' gold.');
@@ -1246,7 +1660,7 @@ function onMessage(ws, raw) {
       if (!tw) break;
       const track = m.track;
       if (!BUILD[tw.type].tracks.includes(track)) break;
-      const cost = trackCost(room, tw);
+      const cost = trackCost(room, tw, track);
       if (room.gold < cost) { note(p, 'Need ' + cost + ' gold for that upgrade.', 'warn'); break; }
       const was = twForm(tw);
       room.gold -= cost; tw.spent += cost; tw.up[track]++;
@@ -1266,6 +1680,7 @@ function onMessage(ws, raw) {
       if (!isMM || room.edit || room.winner) break;
       const ab = MM_ABILITIES[m.a];
       if (!ab) break;
+      if (!room.unlocked.has(m.a)) { note(p, ab.name + ' is still locked.', 'warn'); break; }
       if (room.mmCd[m.a] > now) break;
       if (room.gold < ab.cost) { note(p, 'Need ' + ab.cost + ' gold for ' + ab.name + '.', 'warn'); break; }
       const x = Number(m.x), y = Number(m.y);
@@ -1351,4 +1766,5 @@ setInterval(() => {
 
 server.listen(PORT, () => console.log('Track Master listening on http://localhost:' + PORT));
 
-module.exports = { server, rooms, DEFS, SETTINGS, pathConnected, loadPreset, makeRoom, upgradeCost, trackCost };
+module.exports = { server, rooms, DEFS, SETTINGS, T, pathConnected, loadPreset, makeRoom,
+                   upgradeCost, trackCost, tunnelPartner, findTiles };

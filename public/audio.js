@@ -181,6 +181,39 @@ const SFX = (() => {
     ui:      () => { if (!gate('ui', 40)) return; tone({ f: 1100, f2: 1500, type: 'square', dur: 0.03, v: 0.06 }); },
     paint:   () => { if (!gate('paint', 55)) return; noise({ filter: 'bandpass', f: 900 + Math.random() * 400, q: 3, dur: 0.05, v: 0.1 }); },
     heart:   () => { tone({ f: 70, f2: 45, type: 'sine', dur: 0.12, v: 0.3 }); tone({ f: 60, f2: 40, type: 'sine', dur: 0.16, v: 0.22, delay: 0.17 }); },
+    /* ---- barrier: glassy, so it never sounds like losing health ---- */
+    barrier:  p => { if (!gate('barrier', 80)) return; tone({ f: 1050, f2: 1400, type: 'sine', dur: 0.08, v: 0.1, pan: p }); noise({ filter: 'highpass', f: 5000, dur: 0.07, v: 0.05, pan: p }); },
+    barrierbreak: p => { noise({ filter: 'highpass', f: 3200, dur: 0.45, v: 0.24, pan: p }); chord([1175, 880, 587], { type: 'sine', dur: 0.26, v: 0.18, gap: 0.045, pan: p }); },
+    barrierup: p => chord([587, 880], { type: 'sine', dur: 0.2, v: 0.11, gap: 0.05, pan: p }),
+    /* ---- getting out of the way ---- */
+    dodge:    p => { if (!gate('dodge', 70)) return; noise({ filter: 'bandpass', f: 2600, f2: 900, q: 2, dur: 0.12, v: 0.13, pan: p }); },
+    deflect:  p => { tone({ f: 1800, f2: 2600, type: 'square', dur: 0.06, v: 0.14, pan: p }); noise({ filter: 'bandpass', f: 4200, q: 9, dur: 0.14, v: 0.16, pan: p }); tone({ f: 2400, f2: 700, type: 'sine', dur: 0.16, v: 0.08, delay: 0.03, pan: p }); },
+    flicker:  p => { tone({ f: 500, f2: 900, type: 'square', dur: 0.07, v: 0.12, pan: p }); tone({ f: 900, f2: 400, type: 'square', dur: 0.07, v: 0.1, delay: 0.08, pan: p }); },
+    /* ---- tunnels: a swallow and a spit ---- */
+    tunnelin:  p => { tone({ f: 620, f2: 90, type: 'sine', dur: 0.4, v: 0.24, pan: p }); noise({ filter: 'lowpass', f: 1800, f2: 200, dur: 0.4, v: 0.18, pan: p }); },
+    tunnelout: p => { tone({ f: 110, f2: 820, type: 'sine', dur: 0.3, v: 0.22, pan: p }); noise({ filter: 'bandpass', f: 500, f2: 3000, q: 2, dur: 0.3, v: 0.14, pan: p }); },
+    jolt:     p => { noise({ filter: 'bandpass', f: 1800, f2: 4800, q: 7, dur: 0.2, v: 0.28, pan: p }); tone({ f: 120, f2: 1600, type: 'sawtooth', dur: 0.16, v: 0.12, pan: p }); },
+    /* ---- healing nova: a chord that blooms outwards ---- */
+    nova:     p => {
+      chord([523, 659, 784, 1047, 1319], { type: 'sine', dur: 0.5, v: 0.22, gap: 0.045, pan: p });
+      chord([262, 392], { type: 'triangle', dur: 0.6, v: 0.14, gap: 0.06, pan: p });
+      noise({ filter: 'highpass', f: 3400, dur: 0.6, a: 0.1, v: 0.08, pan: p });
+    },
+    /* ---- the ultimate: the loudest thing in the game, and it should be ---- */
+    ult:      p => {
+      tone({ f: 60, f2: 30, type: 'sine', dur: 1.6, v: 0.5, pan: p });
+      noise({ filter: 'lowpass', f: 300, f2: 60, dur: 1.2, v: 0.4, rate: 0.6, pan: p });
+      tone({ f: 1400, f2: 120, type: 'sawtooth', dur: 0.5, v: 0.2, pan: p });
+      chord([131, 165, 196, 262, 330, 392], { type: 'sawtooth', dur: 0.7, v: 0.2, gap: 0.035, pan: p });
+      noise({ filter: 'bandpass', f: 900, f2: 6000, q: 2, dur: 0.8, a: 0.12, v: 0.2, delay: 0.1, pan: p });
+      tone({ f: 2200, f2: 4400, type: 'sine', dur: 0.4, v: 0.1, delay: 0.45, pan: p });
+    },
+    /* ---- holding the END: a clock that speeds up as the bar fills ---- */
+    tick:     () => { if (!gate('tick', 90)) return; tone({ f: 1200, f2: 1500, type: 'square', dur: 0.03, v: 0.09 }); },
+    /* ---- the armoury ---- */
+    unlockpt: () => { chord([880, 1175, 1568], { type: 'triangle', dur: 0.22, v: 0.2, gap: 0.05 }); noise({ filter: 'highpass', f: 4000, dur: 0.3, v: 0.07 }); },
+    unlocked: () => { chord([392, 523, 659, 880, 1047], { type: 'square', dur: 0.3, v: 0.22, gap: 0.07 }); tone({ f: 98, f2: 196, type: 'sawtooth', dur: 0.5, v: 0.2 }); },
+    slot:     p => chord([659, 988], { type: 'triangle', dur: 0.16, v: 0.16, gap: 0.05, pan: p }),
   };
 
   /* ------------------------------------------------- server event -> sound */
@@ -222,7 +255,28 @@ const SFX = (() => {
       case 'sell': V.sell(px(e.x)); break;
       case 'levelup': V.levelup(px(e.x)); break;
       case 'morph': V.morph(px(e.x)); break;
+      case 'barrierhit': if (e.id === myId) V.barrier(px(e.x)); break;
+      case 'barrierbreak': V.barrierbreak(px(e.x)); break;
+      case 'barrierup': if (e.id === myId) V.barrierup(px(e.x)); break;
+      case 'dodge': V.dodge(px(e.x)); break;
+      case 'deflect': V.deflect(px(e.x)); break;
+      case 'flicker': V.flicker(px(e.x)); break;
+      case 'tunnelin': V.tunnelin(px(e.x)); break;
+      case 'tunnelout': V.tunnelout(px(e.x)); break;
+      case 'jolt': V.jolt(px(e.x)); break;
+      case 'nova': V.nova(px(e.x)); break;
+      case 'ult': V.ult(px(e.x)); break;
+      case 'unlockpt': V.unlockpt(); break;
+      case 'unlocked': V.unlocked(); break;
+      case 'slot': V.slot(px(e.x)); break;
     }
+  }
+
+  /* The escape clock. One tick per tenth of the bar, so holding an END sounds
+     like a countdown getting more and more urgent. */
+  function escape(cur, prev) {
+    if (!ready() || !(cur > 0)) return;
+    if (Math.floor(cur * 10) > Math.floor((prev || 0) * 10)) V.tick();
   }
 
   /* --------------------------------------------------- continuous sounds */
@@ -277,7 +331,7 @@ const SFX = (() => {
   }
 
   return {
-    init, event, flame, lowHp, setEnabled, setVolume, setBoard,
+    init, event, flame, lowHp, escape, setEnabled, setVolume, setBoard,
     isEnabled: () => enabled, getVolume: () => volume,
     state: () => (ctx ? ctx.state : 'none'),
     play: (name, pan) => { if (ready() && V[name]) V[name](pan); },
