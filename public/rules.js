@@ -207,8 +207,19 @@ const RULES = {
   /* Traps only. Standing on the spikes is a different problem to being shot. */
   trapMul(up) { return 1 / (1 + 0.08 * RULES.eff(up.trapres || 0)); },
   toughMul(up) { return 1 / (1 + 0.1 * RULES.eff(up.tough)); },
-  dodgeChance(up) { return RULES.chance(up.dodge, RULES.DODGE_MAX); },
-  deflectChance(up) { return RULES.chance(up.deflect, RULES.DODGE_MAX); },
+  /* Dodge and Deflection are two flavours of one thing: not being hit by a
+     bullet, so they share a single ceiling. Given a ceiling each, a runner who
+     bought both rolled them independently and missed 58% of everything, which
+     is not what "never stronger than 35%" means. Levels in either upgrade push
+     the same curve; which flavour you get on a miss follows whichever of the
+     two you have put more into. */
+  evadeChance(up) { return RULES.chance((up.dodge || 0) + (up.deflect || 0), RULES.DODGE_MAX); },
+  deflectShare(up) {
+    const d = up.dodge || 0, f = up.deflect || 0;
+    return d + f > 0 ? f / (d + f) : 0;
+  },
+  dodgeChance(up) { return RULES.evadeChance(up) * (1 - RULES.deflectShare(up)); },
+  deflectChance(up) { return RULES.evadeChance(up) * RULES.deflectShare(up); },
 
   /* ---- everything else ---- */
   gripMul(up)  { return 1 / (1 + 0.13 * RULES.eff(up.grip)); },

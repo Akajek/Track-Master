@@ -66,7 +66,7 @@ Nothing is hard capped and nothing is unlimited. Levels climb forever; what they
 | Passive upgrades | level 15 | each level worth less than the last, approaching +12 more, never reaching it |
 | Speed | level 15 | a much harsher curve of its own |
 | Abilities | level 5 | barely move past it |
-| Dodge, Deflection | — | approach a **35%** ceiling and never pass it |
+| Dodge, Deflection | — | **share** one **35%** ceiling: levels in either push the same curve, and together they never pass it |
 
 The game says all of this out loud. Every upgrade button past its soft cap is
 marked `diminishing` and shows its **effective** level next to its real one, the
@@ -171,7 +171,7 @@ to have a walkable route to some END.
 |---|---|
 | Track tools | Path brush, eraser, **steep brush**, **tunnel brush**, set START, set END, and Snake / Zigzag / Spiral presets that fit whatever map size you picked. |
 | Steep ground | Path you climb slowly. Traps still go on it — it is path, just harder path. How much it slows is a slider. |
-| Tunnels | Tunnel mouths pair up in reading order: the first links to the second, the third to the fourth, and the board draws the pair number on each one. Step into one and come out of the other. |
+| Tunnels | Tunnel mouths pair up in reading order: the first links to the second, the third to the fourth, and the board draws the pair number on each one. Step into one and come out of the other. A tunnel fires when you walk *into* it, not for as long as you stand in it, so the far mouth is somewhere to stop and think. An odd mouth left without a partner is drawn dashed and red with a `?`. |
 | Several STARTs and ENDs | Off by default, and painting a new one replaces the old. Turn it on in game setup and every START and END you paint stays: runners spawn at a random START and may escape from any END. |
 | Speed painting | Hold `Shift` and drag to lay a whole line of anything in one motion, or to sell a line with the right button. The line is filled in between mouse samples, so dragging fast leaves no gaps. |
 | Bucket fill | Pick a building, turn the bucket on, click the board. It spreads outwards from that tile onto every tile that will take one until the gold runs out. The cursor shows how many you can afford. |
@@ -205,7 +205,9 @@ and the Mastermind a victory point.
 You start with four slots and every ability you own takes one. A fifth ability
 needs a slot bought first, and each slot costs more than the last. Dropping an
 ability hands most of its points back and frees the slot again, so one bad pick
-is a setback and not a dead save.
+is a setback and not a dead save — the ✕ beside each ability shows exactly what
+it would refund, and it stays usable when you are too poor to level anything,
+which is when you most want it.
 
 | | |
 |---|---|
@@ -240,9 +242,14 @@ healing you have), **Barrier** (a second bar that eats damage before your health
 and grows back out of combat), Armor, **Bullet / Fire / Energy Resist** (which
 add on top of Armor rather than multiplying with it, so the second one you buy
 is never wasted), **Trap Resist** (damaging traps only), **Dodge** (a bullet
-passes straight through you), **Deflection** (you bat it away), Grip (resist
-slows, glue and steep ground), Haste, Momentum, Scholar, Quick Revive and Last
-Stand.
+passes straight through you), **Deflection** (you bat it back the way it came),
+Grip (resist slows, glue and steep ground), Haste, Momentum, Scholar, Quick
+Revive and Last Stand.
+
+Dodge and Deflection share a single 35% ceiling rather than having one each —
+two independent 35% rolls come out at 58%, which is not a 35% ceiling. Levels in
+either push the same curve, and which flavour you get on a miss follows whichever
+you have put more into.
 
 If the Mastermind leaves, the seat opens and any runner can take it from the top
 bar. The Mastermind can also step down and become a runner.

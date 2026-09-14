@@ -210,6 +210,8 @@ const SFX = (() => {
     },
     /* ---- holding the END: a clock that speeds up as the bar fills ---- */
     tick:     () => { if (!gate('tick', 90)) return; tone({ f: 1200, f2: 1500, type: 'square', dur: 0.03, v: 0.09 }); },
+    escapeon: p => { tone({ f: 700, f2: 1050, type: 'triangle', dur: 0.16, v: 0.16, pan: p }); noise({ filter: 'highpass', f: 4200, dur: 0.18, v: 0.06, pan: p }); },
+    escapeoff: p => { tone({ f: 900, f2: 300, type: 'square', dur: 0.2, v: 0.18, pan: p }); tone({ f: 450, f2: 180, type: 'square', dur: 0.22, v: 0.12, delay: 0.06, pan: p }); },
     /* ---- the armoury ---- */
     unlockpt: () => { chord([880, 1175, 1568], { type: 'triangle', dur: 0.22, v: 0.2, gap: 0.05 }); noise({ filter: 'highpass', f: 4000, dur: 0.3, v: 0.07 }); },
     unlocked: () => { chord([392, 523, 659, 880, 1047], { type: 'square', dur: 0.3, v: 0.22, gap: 0.07 }); tone({ f: 98, f2: 196, type: 'sawtooth', dur: 0.5, v: 0.2 }); },
@@ -269,6 +271,8 @@ const SFX = (() => {
       case 'unlockpt': V.unlockpt(); break;
       case 'unlocked': V.unlocked(); break;
       case 'slot': V.slot(px(e.x)); break;
+      case 'escapestart': if (e.id === myId) V.escapeon(px(e.x)); break;
+      case 'escapelost': if (e.id === myId) V.escapeoff(px(e.x)); break;
     }
   }
 

@@ -49,6 +49,15 @@ function isMM() { return me && me.role === 'mm'; }
 function myRunner() { return S && S.r.find(r => r.id === me.id); }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function defOf(type) { return D.BUILD[type]; }
+/* Siege raises the damage of every building the Mastermind owns. The stat
+   lines are read off the shared rules, which only know the per-room damage
+   dial -- so fold Siege into a copy of it rather than quietly under-reporting
+   what a building actually hits for. */
+function setWithSiege() {
+  const siege = (UL.up && UL.up.siege) || 0;
+  if (!siege || !SET) return SET;
+  return Object.assign({}, SET, { towerPower: SET.towerPower * (1 + 0.08 * siege) });
+}
 function towerAt(x, y) { return towers.find(t => t.gx === x && t.gy === y); }
 function abilityDef(k) { return D.UPGRADES[k]; }
 
@@ -75,6 +84,7 @@ function onMsg(m) {
     case 'w':
       me = { id: m.id, role: m.role, room: m.room, name: m.name };
       D = m.defs;
+      buildTileMap();
       $('lobby').style.display = 'none'; $('game').style.display = 'flex';
       $('roomCode').textContent = m.room;
       history.replaceState(null, '', '?room=' + m.room);
@@ -377,6 +387,10 @@ function buildSettings(host) {
   note.className = 'hint';
   note.textContent = 'Map size only changes while the track is in edit mode. Everything else can change mid-round.';
   host.appendChild(note);
+  /* Toggles get their label from the current value, and only a later 'set'
+     message used to supply it -- so a freshly built panel showed a blank
+     button until the Mastermind happened to move some other slider. */
+  syncSettings();
 }
 function syncSettings() {
   for (const k in el.setRows) {
@@ -427,7 +441,8 @@ function buildRunner() {
     'buttons mark <span class="warn">diminishing</span> and show as an <b>effective</b> level. ' +
     '<b>Speed</b> is on a harsher curve of its own — it used to be a teleport. ' +
     'Abilities are capped at level <b>' + RULES.AB_CAP + '</b> and diminish past it. ' +
-    'Dodge and Deflection approach <b>' + Math.round(RULES.DODGE_MAX * 100) + '%</b> and never pass it.';
+    'Dodge and Deflection <b>share</b> one ceiling of <b>' + Math.round(RULES.DODGE_MAX * 100) +
+    '%</b> — levels in either push the same curve, and together they never pass it.';
 
   /* The ultimate: one slot, one SUPER BUFF, one very long cooldown. */
   el.ultBox = $('ultBox');
@@ -457,6 +472,7 @@ function buildRunner() {
   $('slotBuy').onclick = () => send({ t: 'slot' });
 
   el.upBtns = [];
+  el.dropBtns = [];
   for (const k in D.UPGRADES) {
     const u = D.UPGRADES[k];
     const b = document.createElement('button');
@@ -465,18 +481,31 @@ function buildRunner() {
       ' <span class="lv muted"></span>' +
       (u.key ? ' <span class="kbd">' + u.key + '</span>' : '') +
       '<small>' + esc(u.desc) + '</small></span>' +
-      (u.kind === 'ability' ? '<span class="drop" title="Drop this ability and free the slot">✕</span>' : '') +
       '<span class="gold cost"></span>';
-    b.onclick = e => {
-      if (e.target.classList.contains('drop')) {
+    b.onclick = () => send({ t: 'upgrade', key: k });
+    const host = $(u.kind === 'ability' ? 'upAbil' : 'upPass');
+    if (u.kind === 'ability') {
+      /* The drop control is a button of its own, beside the buy button rather
+         than inside it. Inside, it inherited the buy button's disabled state --
+         so the moment you could not afford the next level you also could not
+         get rid of the ability, which is precisely when you want to. */
+      const wrap = document.createElement('div');
+      wrap.className = 'abrow';
+      const drop = document.createElement('button');
+      drop.className = 'drop';
+      drop.textContent = '✕';
+      drop.title = 'Drop ' + u.name + ' and free the slot';
+      drop.onclick = () => {
         if (confirm('Drop ' + u.name + '? You get most of the points back and the slot is free again.')) {
           send({ t: 'drop', key: k });
         }
-        return;
-      }
-      send({ t: 'upgrade', key: k });
-    };
-    $(u.kind === 'ability' ? 'upAbil' : 'upPass').appendChild(b);
+      };
+      wrap.appendChild(b); wrap.appendChild(drop);
+      host.appendChild(wrap);
+      el.dropBtns.push({ k, el: drop });
+    } else {
+      host.appendChild(b);
+    }
     el.upBtns.push(b);
   }
 }
@@ -637,7 +666,7 @@ function refreshTowerPanel(tw, def) {
   setHtml(panelEls.sub, esc(def.name) + ' · form ' + (form + 1) + ' of ' + (RULES.MAX_FORM + 1) + ' · ' +
     (next ? left + ' more upgrade' + (left === 1 ? '' : 's') + ' &rarr; <b>' + esc(next) + '</b>'
           : '<b class="gold">final form</b>'));
-  panelEls.stats.textContent = RULES.statLine(def, tw.up, SET);
+  panelEls.stats.textContent = RULES.statLine(def, tw.up, setWithSiege());
 
   const total = RULES.upgrades(tw.up), n = def.tracks.length;
   const group = towers.filter(t => t.ty === tw.ty && inArea(t));
@@ -710,8 +739,10 @@ function updateRunner() {
     ['Resist · fire', Math.round(100 * RULES.resistPct(r.up, 'fire')) + '%', 'armor + fire'],
     ['Resist · energy', Math.round(100 * RULES.resistPct(r.up, 'energy')) + '%', 'armor + energy'],
     ['Trap resist', Math.round(100 * (1 - RULES.trapMul(r.up))) + '%', 'damage traps only'],
-    ['Dodge', Math.round(100 * RULES.dodgeChance(r.up)) + '%', 'ceiling ' + Math.round(100 * RULES.DODGE_MAX) + '%'],
-    ['Deflection', Math.round(100 * RULES.deflectChance(r.up)) + '%', 'ceiling ' + Math.round(100 * RULES.DODGE_MAX) + '%'],
+    ['Bullets missed', Math.round(100 * RULES.evadeChance(r.up)) + '%',
+      'ceiling ' + Math.round(100 * RULES.DODGE_MAX) + '%'],
+    ['  · dodged', Math.round(100 * RULES.dodgeChance(r.up)) + '%', 'straight through'],
+    ['  · deflected', Math.round(100 * RULES.deflectChance(r.up)) + '%', 'sent back'],
     ['Cooldowns', '×' + RULES.hasteMul(r.up).toFixed(2), 'haste'],
   ];
   setHtml(el.statBox, st.map(s =>
@@ -760,9 +791,13 @@ function updateRunner() {
     b.querySelector('.cost').textContent = blocked ? 'no slot' : cost + ' pt';
     b.querySelector('.cost').style.color = blocked ? 'var(--warn)' : '';
     b.disabled = blocked || r.pt < cost;
-    const drop = b.querySelector('.drop');
-    if (drop) drop.style.display = lv > 0 ? '' : 'none';
     b.classList.toggle('owned', lv > 0);
+  }
+  for (const d of el.dropBtns || []) {
+    d.el.style.display = r.up[d.k] > 0 ? '' : 'none';
+    d.el.textContent = '✕ ' + RULES.refundFor(SET, D.UPGRADES[d.k], r.up[d.k]);
+    d.el.title = 'Drop ' + D.UPGRADES[d.k].name + ', free the slot, and take ' +
+      RULES.refundFor(SET, D.UPGRADES[d.k], r.up[d.k]) + ' points back';
   }
 }
 
@@ -856,7 +891,7 @@ function updateHud() {
       s.el.classList.toggle('armed', toolKind === 'aim' && toolType === s.k);
     } else if (r && s.ult) {
       const lv = r.up.ultimate || 0, chosen = r.ul && RULES.ULTS[r.ul];
-      const full = RULES.ultCd(r.up);
+      const full = r.uf || RULES.ultCd(r.up);
       s.key.textContent = 'G';
       s.ico.textContent = chosen ? chosen.icon : '★';
       s.nm.textContent = chosen ? chosen.name : 'Ultimate';
@@ -887,8 +922,10 @@ function updateHud() {
         s.secs.textContent = '';
         s.sweep.style.setProperty('--deg', '0deg');
       } else {
-        const clock = r.uu > 0 && r.ul === 'clock' ? RULES.ultMul(r.ul, r.up.ultimate) : 1;
-        const full = RULES.ability[s.k](lv).cd * RULES.hasteMul(r.up) / clock;
+        /* The length this cooldown actually started at, straight from the
+           server -- not recomputed from the current Haste, which made the
+           wedge jump if you bought Haste while something was cooling down. */
+        const full = (r.cf && r.cf[s.k]) || RULES.ability[s.k](lv).cd * RULES.hasteMul(r.up);
         s.cost.textContent = 'L' + lv + (lv > RULES.AB_CAP ? '▾' : '');
         s.cost.style.color = lv > RULES.AB_CAP ? 'var(--warn)' : 'var(--muted)';
         s.sweep.style.setProperty('--deg', (cd > 0 ? 360 * Math.min(1, cd / full) : 0) + 'deg');
@@ -981,7 +1018,13 @@ function strokeTo(c) {
   stroke.last = { x: c.x, y: c.y };
 }
 
-const TILE_FOR_TOOL = { path: 1, erase: 0, start: 2, end: 3, steep: 4, tunnel: 5 };
+/* Built from the server's own tile table rather than hardcoded, so renumbering
+   a tile there can never leave the brushes painting the wrong thing here. */
+let TILE_FOR_TOOL = {};
+function buildTileMap() {
+  TILE_FOR_TOOL = { path: D.T.PATH, erase: D.T.EMPTY, start: D.T.START,
+                    end: D.T.END, steep: D.T.STEEP, tunnel: D.T.TUNNEL };
+}
 
 cv.addEventListener('mousemove', e => {
   if (!D) return;
@@ -1082,7 +1125,9 @@ window.addEventListener('keydown', e => {
     const types = Object.keys(D.TOWERS).concat(Object.keys(D.TRAPS));
     if (e.code.startsWith('Digit')) {
       const i = +e.code.slice(5) - 1;
-      if (types[i] && unlocked(types[i])) setTool('tower', types[i]);
+      if (!types[i]) return;
+      if (unlocked(types[i])) setTool('tower', types[i]);
+      else toast(defOf(types[i]).name + ' is still locked. Spend an unlock point on it first.', 'warn');
     } else if (e.code === 'Escape') {
       toolKind = null; toolType = null; selTower = null; bucket = false; area = null; updateSide();
     } else if (e.code === 'KeyX' && selTower) {
@@ -1141,6 +1186,11 @@ function drawTerrain() {
   }
   const g = terrain.getContext('2d');
   g.fillStyle = '#132018'; g.fillRect(0, 0, terrain.width, terrain.height);
+  /* Mouths pair up in reading order, so an odd number of them leaves the last
+     one with nobody to link to. Count first so that one can be drawn as the
+     dud it is instead of silently doing nothing when a runner steps in. */
+  let tunnelTotal = 0;
+  for (let i = 0; i < grid.tiles.length; i++) if (grid.tiles[i] === T.TUNNEL) tunnelTotal++;
   let tunnelNo = 0;
   for (let y = 0; y < grid.gh; y++) {
     for (let x = 0; x < grid.gw; x++) {
@@ -1169,16 +1219,20 @@ function drawTerrain() {
         }
       } else if (t === T.TUNNEL) {
         tunnelNo++;
+        const odd = tunnelNo === tunnelTotal && tunnelTotal % 2 === 1;
         const cx = x * C + C / 2, cy = y * C + C / 2;
         const grd = g.createRadialGradient(cx, cy, 2, cx, cy, C / 2);
-        grd.addColorStop(0, '#000'); grd.addColorStop(1, '#3b2a63');
+        grd.addColorStop(0, '#000'); grd.addColorStop(1, odd ? '#4c1d24' : '#3b2a63');
         g.fillStyle = grd;
         g.beginPath(); g.arc(cx, cy, C / 2 - 3, 0, Math.PI * 2); g.fill();
-        g.strokeStyle = '#a78bfa'; g.lineWidth = 2;
+        g.strokeStyle = odd ? '#f87171' : '#a78bfa'; g.lineWidth = 2;
+        if (odd) g.setLineDash([4, 4]);
         g.beginPath(); g.arc(cx, cy, C / 2 - 4, 0, Math.PI * 2); g.stroke();
+        g.setLineDash([]);
         /* the pair number: mouths link 1-2, 3-4, 5-6 in reading order */
-        g.fillStyle = '#e9d5ff'; g.font = 'bold 13px system-ui'; g.textAlign = 'center';
-        g.fillText(String(Math.ceil(tunnelNo / 2)), cx, cy + 5);
+        g.fillStyle = odd ? '#fecaca' : '#e9d5ff';
+        g.font = 'bold 13px system-ui'; g.textAlign = 'center';
+        g.fillText(odd ? '?' : String(Math.ceil(tunnelNo / 2)), cx, cy + 5);
       }
     }
   }
@@ -1469,19 +1523,19 @@ function drawTrap(tw, def, dyn, cx, cy, col, now, form) {
       break;
     }
     case 'tar': {
-      /* a column of fire: licks that grow with the form */
+      /* A column of fire. Plain translucent discs under additive blending
+         rather than a gradient per lick: a board full of braziers was building
+         a new CanvasGradient object dozens of times every frame. */
       const licks = 4 + form;
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
       for (let i = 0; i < licks; i++) {
         const t = now / 220 + i * 1.7;
         const h = (10 + form * 1.6) * (0.65 + 0.35 * Math.sin(t));
-        const ox = Math.sin(t * 0.7 + i) * 7;
-        const g = ctx.createRadialGradient(cx + ox, cy - h * 0.3, 1, cx + ox, cy - h * 0.3, h);
-        g.addColorStop(0, dis ? 'rgba(120,120,120,.5)' : 'rgba(255,237,160,.85)');
-        g.addColorStop(0.5, dis ? 'rgba(80,80,80,.3)' : 'rgba(245,158,11,.5)');
-        g.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(cx + ox, cy - h * 0.3, h, 0, Math.PI * 2); ctx.fill();
+        const ox = Math.sin(t * 0.7 + i) * 7, oy = cy - h * 0.3;
+        ctx.fillStyle = dis ? 'rgba(120,120,120,.10)' : 'rgba(245,158,11,.16)';
+        ctx.beginPath(); ctx.arc(cx + ox, oy, h, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = dis ? 'rgba(160,160,160,.12)' : 'rgba(255,237,160,.22)';
+        ctx.beginPath(); ctx.arc(cx + ox, oy, h * 0.45, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
       ctx.fillStyle = dis ? '#4b5563' : '#78350f';
@@ -1631,23 +1685,31 @@ function drawRunner(r, d, now, dt) {
     }
   }
 
+  /* Health, then barrier, then shield, stacked upwards -- and the name sits
+     above whatever the stack ended up being, so a runner carrying both extra
+     bars does not have them drawn through their own name. */
+  let top = d.y - 17;
+  ctx.fillStyle = '#0b1020'; ctx.fillRect(d.x - 15, top, 30, 4);
+  ctx.fillStyle = r.hp / r.mh > 0.4 ? '#4ade80' : '#f87171';
+  ctx.fillRect(d.x - 15, top, 30 * Math.max(0, r.hp / r.mh), 4);
+  if (r.ba > 0) {
+    top -= 3.5;
+    ctx.fillStyle = '#0b1020'; ctx.fillRect(d.x - 15, top, 30, 2.5);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(d.x - 15, top, 30 * Math.min(1, r.ba / Math.max(1, r.bm)), 2.5);
+  }
+  if (r.sh > 0) {
+    top -= 3.5;
+    ctx.fillStyle = '#0b1020'; ctx.fillRect(d.x - 15, top, 30, 2.5);
+    ctx.fillStyle = '#60a5fa';
+    ctx.fillRect(d.x - 15, top, 30 * Math.min(1, r.sh / 120), 2.5);
+  }
   ctx.font = (r.id === me.id ? 'bold ' : '') + '11px system-ui';
   ctx.textAlign = 'center';
   ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(3,6,16,.9)';
-  ctx.strokeText(r.n, d.x, d.y - 19);
+  ctx.strokeText(r.n, d.x, top - 3);
   ctx.fillStyle = r.id === me.id ? '#fff' : '#d1d5db';
-  ctx.fillText(r.n, d.x, d.y - 19);
-  ctx.fillStyle = '#0b1020'; ctx.fillRect(d.x - 15, d.y - 17, 30, 4);
-  ctx.fillStyle = r.hp / r.mh > 0.4 ? '#4ade80' : '#f87171';
-  ctx.fillRect(d.x - 15, d.y - 17, 30 * Math.max(0, r.hp / r.mh), 4);
-  if (r.ba > 0) {
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(d.x - 15, d.y - 21, 30 * Math.min(1, r.ba / Math.max(1, r.bm)), 2.5);
-  }
-  if (r.sh > 0) {
-    ctx.fillStyle = '#60a5fa';
-    ctx.fillRect(d.x - 15, d.y - 24.5, 30 * Math.min(1, r.sh / 120), 2.5);
-  }
+  ctx.fillText(r.n, d.x, top - 3);
   if (r.id === me.id) {
     ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(d.x, d.y, R + 5, 0, Math.PI * 2); ctx.stroke();
@@ -1819,15 +1881,20 @@ function draw() {
 
 function drawHud(now, W, H) {
   if (!S) { banner('Connecting...', '#fde68a', W, H); return; }
+  /* Several of these can be true at once -- frozen, blacked out and holding
+     the END is a real moment -- so they stack upwards instead of being drawn
+     on top of one another. */
+  let dy = -44;
+  const stack = (text, color) => { banner(text, color, W, H, dy); dy -= 38; };
   if (S.frz > 0) {
     ctx.fillStyle = 'rgba(147,197,253,.16)'; ctx.fillRect(0, 0, W, H);
-    banner('FROZEN  ' + (S.frz / 1000).toFixed(1) + 's', '#bfdbfe', W, H, -44);
+    stack('FROZEN  ' + (S.frz / 1000).toFixed(1) + 's', '#bfdbfe');
   }
   if (S.bo > 0) {
     ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(0, 0, W, H);
-    banner('BLACKOUT  ' + (S.bo / 1000).toFixed(1) + 's', '#fca5a5', W, H, -44);
+    stack('BLACKOUT  ' + (S.bo / 1000).toFixed(1) + 's', '#fca5a5');
   }
-  if (S.od > 0) banner('OVERDRIVE  ' + (S.od / 1000).toFixed(1) + 's', '#fdba74', W, H, -82);
+  if (S.od > 0) stack('OVERDRIVE  ' + (S.od / 1000).toFixed(1) + 's', '#fdba74');
 
   if (S.win) {
     VFX.winFireworks(now);
@@ -1853,7 +1920,7 @@ function drawHud(now, W, H) {
     const r = myRunner();
     if (r && r.d) banner('You died. Respawning in ' + (r.rs / 1000).toFixed(1) + 's', '#fca5a5', W, H);
     else if (r && r.esc > 0) {
-      banner('HOLD THE END — ' + ((r.en * (1 - r.esc)) / 1000).toFixed(1) + 's to escape', '#fbbf24', W, H, -44);
+      stack('HOLD THE END — ' + ((r.en * (1 - r.esc)) / 1000).toFixed(1) + 's to escape', '#fbbf24');
     }
   }
   if (performance.now() - lastStateAt > 2000) banner('Waiting for the server...', '#fde68a', W, H, -40);

@@ -194,8 +194,8 @@ const UPGRADES = {
   resFire:   { name: 'Fire Resist',  kind: 'passive', desc: 'Less damage from fire, on top of Armor' },
   resEnergy: { name: 'Energy Resist', kind: 'passive', desc: 'Less damage from energy, on top of Armor' },
   trapres:   { name: 'Trap Resist',  kind: 'passive', desc: 'Less damage from damaging traps only' },
-  dodge:     { name: 'Dodge',        kind: 'passive', desc: 'Chance a bullet passes straight through you (35% ceiling)' },
-  deflect:   { name: 'Deflection',   kind: 'passive', desc: 'Chance to bat a bullet away (35% ceiling)' },
+  dodge:     { name: 'Dodge',        kind: 'passive', desc: 'Bullets pass straight through you. Shares a 35% ceiling with Deflection' },
+  deflect:   { name: 'Deflection',   kind: 'passive', desc: 'Bullets are batted back the way they came. Shares Dodge’s 35% ceiling' },
   grip:      { name: 'Grip',         kind: 'passive', desc: 'Resist slows, glue and steep ground' },
   haste:     { name: 'Haste',        kind: 'passive', desc: 'Shorter ability cooldowns' },
   momentum:  { name: 'Momentum',     kind: 'passive', desc: 'Speeds up while you avoid damage' },
@@ -232,13 +232,6 @@ const buildCost   = (room, type)    => RULES.buildCost(room.set, BUILD[type]);
 const trackCost   = (room, tw, track) => {
   const def = BUILD[tw.type];
   return RULES.trackCost(room.set, def, RULES.upgrades(tw.up), tw.up[track] || 0, def.tracks.length);
-};
-/* The cheapest upgrade this building currently sells, which is what a mass
-   upgrade is sorted by. */
-const bestTrackCost = (room, tw) => {
-  let best = Infinity;
-  for (const tr of BUILD[tw.type].tracks) best = Math.min(best, trackCost(room, tw, tr));
-  return best === Infinity ? 0 : best;
 };
 const siegeMul = room => 1 + 0.08 * (room.mmUp.siege || 0);
 const twDmg   = (room, tw) => RULES.dmg(BUILD[tw.type], tw.up, room.set) * siegeMul(room);
@@ -304,10 +297,6 @@ function tileAt(room, x, y) { return inBounds(room, x, y) ? room.tiles[idx(room,
 function walkable(t) { return t === T.PATH || t === T.START || t === T.END || t === T.STEEP || t === T.TUNNEL; }
 /* Traps go on ground a runner walks along, which now includes the steep bits. */
 function pathLike(t) { return t === T.PATH || t === T.STEEP; }
-function findTile(room, type) {
-  const i = room.tiles.indexOf(type);
-  return i < 0 ? null : { x: i % room.set.gw, y: Math.floor(i / room.set.gw) };
-}
 function findTiles(room, type) {
   const out = [];
   for (let i = 0; i < room.tiles.length; i++) {
@@ -462,7 +451,8 @@ function placeAtStart(room, p, now) {
   const s = list.length ? list[(Math.random() * list.length) | 0] : null;
   p.x = s ? (s.x + 0.5) * CELL : CELL / 2;
   p.y = s ? (s.y + 0.5) * CELL : CELL / 2;
-  p.dashUntil = 0; p.surgeUntil = 0; p.rootUntil = 0; p.endAt = 0; p.tunnelUntil = 0;
+  p.dashUntil = 0; p.surgeUntil = 0; p.rootUntil = 0; p.endAt = 0;
+  p.tunnelUntil = 0; p.onTunnel = false;
   /* Real, brief invulnerability on spawn -- separate from Ghost, which only
      hides you. Being shot the instant you appear is not a game. */
   p.invUntil = Math.max(p.invUntil || 0, (now || Date.now()) + SPAWN_GRACE);
@@ -499,12 +489,13 @@ function hidden(p, now) {
 }
 
 /* --------------------------------------------------------------- unlocking */
+const UNLOCK_MAX = UNLOCKABLE.length + 4;
 function addUnlockDamage(room, amt) {
-  if (!(amt > 0)) return;
+  if (!(amt > 0) || room.unlockEarned >= UNLOCK_MAX) return;
   room.dmgDone += amt;
   let need = RULES.unlockNeed(room.set, room.unlockEarned);
   let gained = 0;
-  while (room.dmgDone >= need && room.unlockEarned < UNLOCKABLE.length + 4) {
+  while (room.dmgDone >= need && room.unlockEarned < UNLOCK_MAX) {
     room.dmgDone -= need;
     room.unlockEarned++; room.unlockPts++; gained++;
     need = RULES.unlockNeed(room.set, room.unlockEarned);
@@ -581,15 +572,19 @@ function damage(room, p, amt, now, src, el, opts) {
    step out of the way of, which is why the Laser says so on the tin. */
 function evade(room, p, now, el) {
   if (!p || p.dead || el !== 'bullet') return null;
-  if (Math.random() < RULES.deflectChance(p.up)) {
-    ev(room, { k: 'deflect', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+  /* One roll against one shared ceiling, then pick the flavour -- not two
+     independent rolls, which would stack past the ceiling. */
+  if (Math.random() >= RULES.evadeChance(p.up)) return null;
+  const x = Math.round(p.x), y = Math.round(p.y);
+  /* Written out rather than built from a variable so that every event kind the
+     server can emit stays greppable: the test suite reads these literals to
+     check that the effects and the sounds cover all of them. */
+  if (Math.random() < RULES.deflectShare(p.up)) {
+    ev(room, { k: 'deflect', x, y, id: p.id });
     return 'deflect';
   }
-  if (Math.random() < RULES.dodgeChance(p.up)) {
-    ev(room, { k: 'dodge', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
-    return 'dodge';
-  }
-  return null;
+  ev(room, { k: 'dodge', x, y, id: p.id });
+  return 'dodge';
 }
 
 function kill(room, p, now) {
@@ -765,7 +760,13 @@ function tick(room, now) {
          the hill is not a status effect, it is a hill. */
       p.terrain = 1 - (S.steepSlow / 100) * (0.5 + 0.5 * rGrip(p));
     }
-    if (ground === T.TUNNEL && now >= p.tunnelUntil) {
+    /* A tunnel fires when you WALK INTO it, not for as long as you are in it.
+       Triggering on occupancy meant that standing still on a mouth threw you
+       back and forth between the two ends forever, because you always arrive
+       standing on the far mouth. The short cooldown is belt and braces for a
+       runner hovering exactly on the boundary between two tiles. */
+    const onTunnel = ground === T.TUNNEL;
+    if (onTunnel && !p.onTunnel && now >= p.tunnelUntil) {
       const par = tunnelPartner(room, gx, gy);
       if (par) {
         ev(room, { k: 'tunnelin', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
@@ -775,6 +776,7 @@ function tick(room, now) {
         ev(room, { k: 'tunnelout', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       }
     }
+    p.onTunnel = onTunnel;
     const under = room.towers.get(gx + ',' + gy);
     if (under && under.disabledUntil <= now && BUILD[under.type].onPath) stepOnTrap(room, under, p, now, dt);
 
@@ -825,7 +827,11 @@ function tick(room, now) {
       }
       if (now - p.endAt >= p.endNeed) finish(room, p, now);
     } else if (p.endAt) {
-      ev(room, { k: 'escapelost', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+      /* Only worth announcing if there was something to lose: a runner
+         jittering on the boundary tile would otherwise spray RESET. */
+      if (now - p.endAt > (p.endNeed || 0) * 0.15) {
+        ev(room, { k: 'escapelost', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
+      }
       p.endAt = 0;
     }
     if (room.winner) return;
@@ -949,18 +955,22 @@ function tick(room, now) {
         pr.x += pr.vx * dt / sub;
         pr.y += pr.vy * dt / sub;
         pr.left -= dist / sub;
+        if (pr.dead) continue;                     /* deflected: just a visual now */
         for (const t of flying) {
           if (t.p && (t.p.dead || hidden(t.p, now))) continue;
           if (t.decoy && t.decoy.hp <= 0) continue;
-          if (pr.spent && pr.spent === (t.p ? t.p.id : -1)) continue;
+          if (pr.pass && t.p && pr.pass === t.p.id) continue;   /* already dodged this one */
           const tx = t.p ? t.p.x : t.decoy.x, ty = t.p ? t.p.y : t.decoy.y;
           if (Math.hypot(tx - pr.x, ty - pr.y) <= RUNNER_R + 4) {
             const dodged = t.p ? evade(room, t.p, now, pr.el) : null;
             if (dodged === 'deflect') {
-              pr.vx = -pr.vx; pr.vy = -pr.vy; pr.dmg = 0; pr.spent = t.p.id; pr.c = '#e2e8f0';
+              /* Sent back the way it came, and harmless from here on: a batted
+                 shot must not go on to hit the runner behind you. */
+              pr.vx = -pr.vx; pr.vy = -pr.vy; pr.dmg = 0; pr.dead = 1; pr.c = '#e2e8f0';
+              pr.left = Math.min(pr.left, 260);
               break;
             }
-            if (dodged === 'dodge') { pr.spent = t.p.id; break; }
+            if (dodged === 'dodge') { pr.pass = t.p.id; break; }
             hurtTarget(room, t, pr.dmg, now, 'turret', pr.el, { shot: 1 });
             ev(room, { k: 'spark', x: Math.round(pr.x), y: Math.round(pr.y), c: pr.c });
             hit = true;
@@ -1085,8 +1095,9 @@ function stateMsg(room, now) {
     hp: Math.round(p.hp), mh: Math.round(p.maxHp), sh: Math.round(p.shield),
     ba: Math.round(p.barrier), bm: Math.round(p.barrierMax),
     d: p.dead ? 1 : 0, pt: p.points, fin: p.finishes, dth: p.deaths, lap: p.laps, up: p.up,
-    cd: abilityCds(p, now),
+    cd: abilityCds(p, now), cf: p.cdFull,
     sx: p.slots, ul: p.ult || '', uc: Math.max(0, p.ultCd - now), uu: Math.max(0, p.ultUntil - now),
+    uf: Math.round(p.ultCdFull || RULES.ultCd(p.up)),
     gh: hidden(p, now) ? 1 : 0, fk: p.ghostUntil > now && p.flickerUntil > now ? 1 : 0,
     iv: p.invUntil > now ? 1 : 0,
     ds: p.dashUntil > now ? 1 : 0, su: p.surgeUntil > now ? 1 : 0,
@@ -1194,9 +1205,10 @@ function onJoin(ws, m) {
     up, input: { dx: 0, dy: 0 }, faceX: 1, faceY: 0,
     dashUntil: 0, ghostUntil: 0, flickerUntil: 0, invUntil: 0,
     surgeUntil: 0, surgeMul: 1, rootUntil: 0, tunnelUntil: 0,
-    endAt: 0, endNeed: 0, onEnd: false,
+    endAt: 0, endNeed: 0, onEnd: false, onTunnel: false,
     extraSlots: 0, slots: 0, ult: '', ultCd: 0, ultUntil: 0,
-    cd: {}, slow: 1, terrain: 1, inFrost: false, lastHurt: 0, trapAt: {},
+    cd: {}, cdFull: {}, ultCdFull: 0,
+    slow: 1, terrain: 1, inFrost: false, lastHurt: 0, trapAt: {},
   };
   p.slots = room.set.slotStart;
   ws.player = p;
@@ -1204,6 +1216,7 @@ function onJoin(ws, m) {
   if (m.role === 'mm' && !room.mm) { p.role = 'mm'; room.mm = p; }
   else if (m.role === 'mm') note(p, 'The Mastermind seat is taken by ' + room.mm.name + '. You are a runner for now.', 'warn');
   p.maxHp = rMaxHp(room, p); p.hp = p.maxHp;
+  p.barrierMax = RULES.barrierMax(room.set, p.up); p.barrier = p.barrierMax;
   placeAtStart(room, p, Date.now());
   send(p, JSON.stringify({ t: 'w', id: p.id, role: p.role, room: code, name, defs: DEFS }));
   send(p, setMsg(room));
@@ -1259,6 +1272,8 @@ function setRole(p, role) {
     if (room.mm === p) room.mm = null;
     if (p.role === 'runner') return;
     p.role = 'runner'; p.dead = false; p.hp = p.maxHp;
+    p.slots = Math.min(ABILITY_KEYS.length, room.set.slotStart + p.extraSlots);
+    p.barrier = RULES.barrierMax(room.set, p.up);
     placeAtStart(room, p, now);
     shout(room, p.name + ' is now a runner.');
   }
@@ -1281,6 +1296,11 @@ function useAbility(room, p, key, now) {
   const a = ABILITY[key](lv);
   const clock = ultOn(p, 'haste', now);
   const cd = a.cd * rHaste(p) / (clock || 1);
+  /* Remember the length this particular cooldown started at. The HUD sweeps a
+     wedge across it, and working the length out again from the current Haste
+     made the wedge jump whenever Haste was bought -- or whenever the Overclock
+     ultimate started or ended -- part way through a cooldown. */
+  p.cdFull[key] = Math.round(cd);
 
   switch (key) {
     case 'dash':
@@ -1353,7 +1373,8 @@ function useUltimate(room, p, now) {
   if (p.ultCd > now) return;
   const u = RULES.ULTS[p.ult];
   p.ultUntil = now + RULES.ULT_DUR;
-  p.ultCd = now + RULES.ultCd(p.up);
+  p.ultCdFull = RULES.ultCd(p.up);
+  p.ultCd = now + p.ultCdFull;
   if (u.stat === 'barrier') p.barrier = RULES.barrierMax(room.set, p.up) * RULES.ultMul(p.ult, p.up.ultimate);
   ev(room, { k: 'ult', x: Math.round(p.x), y: Math.round(p.y), id: p.id, u: p.ult,
     n: u.name, c: u.color, d: RULES.ULT_DUR, m: Math.round(RULES.ultMul(p.ult, p.up.ultimate) * 10) / 10 });
@@ -1424,8 +1445,12 @@ function onMessage(ws, raw) {
       const cost = upgradeCost(room, m.key, lv);
       if (p.points < cost) { note(p, 'Need ' + cost + ' points for ' + def.name + '.', 'warn'); break; }
       p.points -= cost; p.up[m.key] = lv + 1;
+      const wasMax = p.maxHp;
       p.maxHp = rMaxHp(room, p);
-      if (m.key === 'hp' && !p.dead) p.hp += 26 * (room.set.runnerHp / 100);
+      /* Vitality hands you the health it just added and not a flat 26: past
+         the soft cap a level adds far less than that, and topping up by the
+         full amount every time turned Vitality into a cheap repeatable heal. */
+      if (m.key === 'hp' && !p.dead) p.hp = Math.min(p.maxHp, p.hp + Math.max(0, p.maxHp - wasMax));
       ev(room, { k: 'levelup', x: Math.round(p.x), y: Math.round(p.y), id: p.id });
       note(p, def.name + ' is now level ' + p.up[m.key] +
         (RULES.softCapped(m.key, def.kind, p.up[m.key]) ? ' (diminishing).' : '.'), 'good');
@@ -1438,7 +1463,8 @@ function onMessage(ws, raw) {
       if (p.slots >= ABILITY_KEYS.length) { note(p, 'You already have a slot for everything.', 'info'); break; }
       const cost = RULES.slotCost(room.set, p.slots);
       if (p.points < cost) { note(p, 'Need ' + cost + ' points for another slot.', 'warn'); break; }
-      p.points -= cost; p.extraSlots++; p.slots++;
+      p.points -= cost; p.extraSlots++;
+      p.slots = Math.min(ABILITY_KEYS.length, room.set.slotStart + p.extraSlots);
       ev(room, { k: 'slot', x: Math.round(p.x), y: Math.round(p.y), id: p.id, n: p.slots });
       note(p, 'Ability slots: ' + p.slots + '.', 'good');
       break;
@@ -1450,7 +1476,7 @@ function onMessage(ws, raw) {
       const def = UPGRADES[m.key];
       if (!def || def.kind !== 'ability' || !p.up[m.key]) break;
       const back = RULES.refundFor(room.set, def, p.up[m.key]);
-      p.up[m.key] = 0; p.cd[m.key] = 0; p.points += back;
+      p.up[m.key] = 0; p.cd[m.key] = 0; p.cdFull[m.key] = 0; p.points += back;
       note(p, 'Dropped ' + def.name + ' for ' + back + ' points back.', 'info');
       break;
     }
@@ -1471,7 +1497,9 @@ function onMessage(ws, raw) {
       else room.set[m.key] = v;
       if (m.key === 'startGold' && room.edit) room.gold = v;
       if (m.key === 'slotStart') {
-        for (const r of runners(room)) r.slots = room.set.slotStart + r.extraSlots;
+        for (const r of runners(room)) {
+          r.slots = Math.min(ABILITY_KEYS.length, room.set.slotStart + r.extraSlots);
+        }
       }
       broadcast(room, setMsg(room));
       break;

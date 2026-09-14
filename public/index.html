@@ -115,8 +115,14 @@
   #side .list button.locked:not(:disabled) { border-color:var(--gold); opacity:1; }
   #side .list .lock { filter:grayscale(.2); }
   #side .list button.owned { border-left:3px solid var(--good); }
-  #side .list .drop { flex:none; color:var(--muted); font-size:13px; padding:0 5px; border-radius:4px; }
-  #side .list .drop:hover { color:var(--warn); background:#2a1622; }
+  /* an ability row: the buy button, and a drop button beside it that stays
+     usable when the buy button is greyed out for want of points */
+  .abrow { display:flex; gap:5px; margin-bottom:5px; align-items:stretch; }
+  .abrow > button[data-up] { flex:1; margin-bottom:0 !important; }
+  #side .list .abrow .drop { flex:none; width:auto; color:var(--muted); font-size:11px;
+                             padding:0 8px; display:flex; align-items:center; justify-content:center;
+                             margin-bottom:0; white-space:nowrap; }
+  #side .list .abrow .drop:hover { color:var(--warn); border-color:var(--warn); background:#2a1622; }
 
   /* the live numbers panel: a curve you can read beats a curve you are told about */
   .statbox { border:1px solid var(--line); border-radius:8px; background:#0f1425; padding:4px 8px; }

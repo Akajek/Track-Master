@@ -139,6 +139,7 @@ async function main() {
      When this was only done on a size *change*, a default-sized map left the
      cache at 300x150 and most of the board never got painted. */
   const gameSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'game.js'), 'utf8');
+  const srvEarly = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const drawTerrainBody = gameSrc.slice(gameSrc.indexOf('function drawTerrain('),
                                         gameSrc.indexOf('function drawTower('));
   assert.ok(/terrain\.width\s*=\s*cv\.width/.test(drawTerrainBody),
@@ -162,6 +163,20 @@ async function main() {
      and any element rebuilt under the pointer swallows the click. Markup goes
      through setHtml(), which writes only when the string has actually changed. */
   assert.ok(/function setHtml\(/.test(gameSrc), 'the client has a change-guarded markup writer');
+  /* The drop control must be a button of its own beside the buy button. Nested
+     inside it, it inherited the buy button's disabled state -- so you could not
+     drop an ability exactly when you were too poor to level it, which is when
+     dropping is the whole point. */
+  assert.ok(/class = 'abrow'|className = 'abrow'/.test(gameSrc),
+    'ability rows wrap the buy button and the drop button as siblings');
+  const runnerBuild = gameSrc.slice(gameSrc.indexOf('function buildRunner('),
+                                    gameSrc.indexOf('function updateSide('));
+  assert.ok(!/<span class="drop"/.test(runnerBuild),
+    'the drop control is not markup inside the buy button any more');
+  /* A deflected bolt is a visual from then on: it must not go on to hit the
+     runner standing behind you. */
+  assert.ok(/pr\.dead = 1/.test(srvEarly) && /if \(pr\.dead\) continue;/.test(srvEarly),
+    'a deflected projectile is marked spent and stops colliding');
   const perFrame = ['updateSide', 'updateMM', 'refreshTowerPanel', 'updateRunner', 'updateHud'];
   const bounds = {
     updateSide: 'function updateMM(', updateMM: 'function updateTowerPanel(',
@@ -379,12 +394,52 @@ async function main() {
   for (const lv of [1, 5, 10, 20, 50, 200]) {
     assert.ok(RULES.dodgeChance({ dodge: lv }) < RULES.DODGE_MAX, 'dodge at ' + lv + ' stays under the ceiling');
     assert.ok(RULES.deflectChance({ deflect: lv }) < RULES.DODGE_MAX, 'deflection at ' + lv + ' does too');
+    /* The ceiling is on NOT BEING HIT, not on each upgrade separately: two
+       independent 35% rolls come out at 58%, which is not a 35% ceiling. */
+    assert.ok(RULES.evadeChance({ dodge: lv, deflect: lv }) <= RULES.DODGE_MAX + 1e-9,
+      'dodge and deflection together stay under the ceiling at level ' + lv);
+    const d = RULES.dodgeChance({ dodge: lv, deflect: lv });
+    const f = RULES.deflectChance({ dodge: lv, deflect: lv });
+    assert.ok(Math.abs((d + f) - RULES.evadeChance({ dodge: lv, deflect: lv })) < 1e-9,
+      'the two flavours are a split of the one chance, not two chances');
   }
-  assert.ok(RULES.dodgeChance({ dodge: 12 }) > 0.25, 'but a heavy investment still gets most of the way there');
+  assert.ok(RULES.evadeChance({ dodge: 12 }) > 0.25, 'but a heavy investment still gets most of the way there');
+  assert.ok(RULES.evadeChance({ dodge: 6, deflect: 6 }) > RULES.evadeChance({ dodge: 6 }),
+    'and levels in either upgrade push the same curve');
+  assert.strictEqual(RULES.deflectChance({ dodge: 9, deflect: 0 }), 0,
+    'with nothing in Deflection every miss is a dodge');
   const gameSrcDr = fs.readFileSync(path.join(__dirname, '..', 'public', 'game.js'), 'utf8');
   assert.ok(/function lvLabel/.test(gameSrcDr) && /eff /.test(gameSrcDr),
     'the client shows the effective level, not just the raw one');
   assert.ok(/diminishing/.test(gameSrcDr), 'and says the word out loud');
+
+  /* ---- Vitality hands over what it actually added ------------------------ */
+  /* It used to top you up by a flat 26 whatever the level. Past the soft cap a
+     level is worth a fraction of that, so buying Vitality while hurt was a
+     cheap repeatable heal that had nothing to do with the health it bought. */
+  await setOpt(mm, 'upGrow', 25);              /* the curve is the point, not the bill */
+  await park(mm, run);
+  await runRight(run, () => me(run).pt >= 90, 'bank points for the Vitality climb', 25000);
+  for (let i = 0; i < 22; i++) run.send({ t: 'upgrade', key: 'hp' });
+  await waitFor(() => me(run).up.hp >= 22, 'Vitality taken well past the soft cap', 8000);
+  await setOpt(mm, 'upGrow', 100);
+  await park(mm, run);
+  mm.send({ t: 'tower', type: 'turret', x: SX, y: ROW - 2 });
+  await waitFor(() => twAt(mm, SX, ROW - 2), 'a turret to do the hurting');
+  await waitFor(() => me(run).hp < me(run).mh - 45 && !me(run).d, 'the runner is properly hurt', 20000);
+  mm.send({ t: 'sell', x: SX, y: ROW - 2 });
+  await sleep(80);
+  const hpWas = me(run).hp, mhWas = me(run).mh, lvWas = me(run).up.hp;
+  await setOpt(mm, 'upGrow', 25);
+  run.send({ t: 'upgrade', key: 'hp' });
+  await waitFor(() => me(run).up.hp === lvWas + 1, 'one more Vitality');
+  await setOpt(mm, 'upGrow', 100);
+  const gainedMax = me(run).mh - mhWas, gainedHp = me(run).hp - hpWas;
+  assert.ok(gainedMax > 0 && gainedMax < 26,
+    'past the soft cap a Vitality level is worth well under a full 26 (' + gainedMax.toFixed(1) + ')');
+  assert.ok(gainedHp <= gainedMax + 4,
+    'and it heals you by what it added, not by a flat 26 (healed ' + gainedHp.toFixed(1) +
+    ' for ' + gainedMax.toFixed(1) + ' of max HP)');
 
   /* ---- ability slots ------------------------------------------------------ */
   /* Four slots to start with. A fifth ability needs a slot bought first, which
@@ -881,6 +936,31 @@ async function main() {
   await waitFor(() => mm.state.edit === 0, 'live with tunnels');
   await park(mm, run);
   await runRight(run, () => me(run).x > startPx(EX - 2), 'the tunnel throws the runner across the board', 8000);
+  /* A tunnel has to fire on the way IN, not for as long as you are standing in
+     it: you always arrive standing on the far mouth, so triggering on
+     occupancy bounced a stationary runner between the two ends forever.
+     Walk in one short step at a time so that when the tunnel does fire the
+     runner is left standing still on the far mouth, which is the case that
+     used to bounce. */
+  const tileUnder = () => run.grid.tiles[ROW * run.grid.gw + Math.floor(me(run).x / 40)];
+  let onMouth = false;
+  for (let i = 0; i < 80 && !onMouth; i++) {
+    const before = me(run).x;
+    run.send({ t: 'input', dx: 1, dy: 0 });
+    await sleep(30);
+    run.send({ t: 'input', dx: 0, dy: 0 });
+    await sleep(60);
+    if (Math.abs(me(run).x - before) > 100 && tileUnder() === T.TUNNEL) onMouth = true;
+  }
+  assert.ok(onMouth, 'walked into a mouth and came out of the other one');
+  const parked = me(run).x;
+  let bounced = 0;
+  for (let i = 0; i < 30; i++) {
+    await sleep(50);
+    if (Math.abs(me(run).x - parked) > 100) bounced++;
+  }
+  assert.strictEqual(bounced, 0,
+    'standing still on a tunnel mouth must not teleport you (' + bounced + ' hops in 1.5s)');
 
   /* ---- several STARTs and several ENDs ------------------------------------ */
   mm.send({ t: 'mode', edit: true });
@@ -1032,6 +1112,13 @@ async function main() {
   assert.ok(kinds.size > 20, 'found the event kinds (' + kinds.size + ')');
   for (const k of kinds) {
     assert.ok(vfx.includes("case '" + k + "'"), 'vfx.js draws nothing for event "' + k + '"');
+  }
+  /* The scan above reads string literals, so an event emitted through a
+     variable would quietly stop being checked. Name the ones that matter. */
+  for (const k of ['hit', 'die', 'fin', 'boom', 'dodge', 'deflect', 'barrierhit', 'barrierbreak',
+                   'nova', 'ult', 'tunnelin', 'tunnelout', 'flicker', 'escapestart', 'escapelost',
+                   'unlockpt', 'unlocked', 'slot', 'jolt', 'morph']) {
+    assert.ok(kinds.has(k), 'event "' + k + '" must be emitted as a plain literal so it stays checkable');
   }
 
   console.log('ALL TESTS PASSED  (' + voices.size + ' voices, ' + kinds.size + ' event kinds)');
